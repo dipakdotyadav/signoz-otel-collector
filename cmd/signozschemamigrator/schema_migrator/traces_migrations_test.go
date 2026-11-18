@@ -31,6 +31,7 @@ func TestTracesMigrationsExactNature(t *testing.T) {
 			TracesMigrations[17],
 			TracesMigrations[18],
 			TracesMigrations[19], // 1019 (tenant metadata columns)
+			TracesMigrations[20], // 1020 (tenant-keyed metadata tables)
 		},
 		[]SchemaMigrationRecord{
 			TracesMigrations[1], // 1001 (async)
