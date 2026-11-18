@@ -2369,7 +2369,7 @@ var TracesMigrations = []SchemaMigrationRecord{
 				Table:    "span_attributes_keys_v2",
 				Columns: []Column{
 					{Name: "tagKey", Type: LowCardinalityColumnType{ColumnTypeString}, Codec: "ZSTD(1)"},
-					{Name: "tagType", Type: EnumerationColumnType{Values: []string{"'tag' = 1", "'resource' = 2", "'scope' = 3", "'spanfield' = 4"}, Size: 8}, Codec: "ZSTD(1)"},
+					{Name: "tagType", Type: EnumerationColumnType{Values: []string{"'tag' = 1", "'resource' = 2", "'scope' = 3"}, Size: 8}, Codec: "ZSTD(1)"},
 					{Name: "dataType", Type: EnumerationColumnType{Values: []string{"'string' = 1", "'bool' = 2", "'float64' = 3"}, Size: 8}, Codec: "ZSTD(1)"},
 					{Name: "isColumn", Type: ColumnTypeBool, Codec: "ZSTD(1)"},
 					{Name: "timestamp", Type: DateTimeColumnType{}, Default: "toDateTime(now())"},
@@ -2385,7 +2385,7 @@ var TracesMigrations = []SchemaMigrationRecord{
 				Table:    "distributed_span_attributes_keys_v2",
 				Columns: []Column{
 					{Name: "tagKey", Type: LowCardinalityColumnType{ColumnTypeString}, Codec: "ZSTD(1)"},
-					{Name: "tagType", Type: EnumerationColumnType{Values: []string{"'tag' = 1", "'resource' = 2", "'scope' = 3", "'spanfield' = 4"}, Size: 8}, Codec: "ZSTD(1)"},
+					{Name: "tagType", Type: EnumerationColumnType{Values: []string{"'tag' = 1", "'resource' = 2", "'scope' = 3"}, Size: 8}, Codec: "ZSTD(1)"},
 					{Name: "dataType", Type: EnumerationColumnType{Values: []string{"'string' = 1", "'bool' = 2", "'float64' = 3"}, Size: 8}, Codec: "ZSTD(1)"},
 					{Name: "isColumn", Type: ColumnTypeBool, Codec: "ZSTD(1)"},
 					{Name: "timestamp", Type: DateTimeColumnType{}, Default: "toDateTime(now())"},
