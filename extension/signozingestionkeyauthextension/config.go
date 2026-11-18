@@ -4,19 +4,21 @@ import (
 	"errors"
 	"net/url"
 	"strings"
+
+	"go.opentelemetry.io/collector/config/configopaque"
 )
 
 type Config struct {
-	ResolverEndpoint string `mapstructure:"resolver_endpoint"`
-	InternalToken    string `mapstructure:"internal_token"`
-	AllowInsecure    bool   `mapstructure:"allow_insecure"`
+	ResolverEndpoint string              `mapstructure:"resolver_endpoint"`
+	InternalToken    configopaque.String `mapstructure:"internal_token"`
+	AllowInsecure    bool                `mapstructure:"allow_insecure"`
 }
 
 func (cfg *Config) Validate() error {
 	if cfg == nil || strings.TrimSpace(cfg.ResolverEndpoint) == "" {
 		return errors.New("resolver_endpoint is required")
 	}
-	if strings.TrimSpace(cfg.InternalToken) == "" {
+	if strings.TrimSpace(string(cfg.InternalToken)) == "" {
 		return errors.New("internal_token is required")
 	}
 	u, err := url.ParseRequestURI(cfg.ResolverEndpoint)
