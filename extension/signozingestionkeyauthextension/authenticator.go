@@ -52,7 +52,7 @@ func newAuthenticator(cfg Config, logger *zap.Logger) *authenticator {
 	return &authenticator{
 		resolver: &httpIdentityResolver{
 			endpoint: cfg.ResolverEndpoint,
-			token:    cfg.InternalToken,
+			token:    string(cfg.InternalToken),
 			client: &http.Client{
 				Timeout: defaultResolverTimeout,
 				CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
