@@ -1,0 +1,66 @@
+# Multi-tenant Community Edition overlay.
+# Load after config/default-config.yaml. Values in this file replace the
+# corresponding receiver auth settings and pipeline processor/receiver lists.
+extensions:
+  signozingestionkeyauth:
+    resolver_endpoint: https://signoz-api.internal/api/v2/internal/ingestion-keys/resolve
+    internal_token: ${env:SIGNOZ_INTERNAL_INGESTION_RESOLVER_TOKEN}
+    allow_insecure: false
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
+        auth:
+          authenticator: signozingestionkeyauth
+      http:
+        endpoint: "0.0.0.0:4318"
+        auth:
+          authenticator: signozingestionkeyauth
+
+processors:
+  signoztenantcontext: {}
+  signozspanmetrics/delta:
+    dimensions:
+      - name: service.namespace
+        default: default
+      - name: deployment.environment
+        default: default
+      - name: signoz.collector.id
+      - name: service.version
+      - name: browser.platform
+      - name: browser.mobile
+      - name: k8s.cluster.name
+      - name: k8s.node.name
+      - name: k8s.namespace.name
+      - name: host.name
+      - name: host.type
+      - name: container.name
+      - name: special.random.attribute
+      - name: generated.by
+      # Required: span-derived metrics must carry tenant identity as datapoint labels.
+      - name: signoz.org.id
+      - name: signoz.project.id
+
+service:
+  extensions: [zpages, signozingestionkeyauth]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [signoztenantcontext, signozspanmetrics/delta, batch]
+      exporters: [clickhousetraces]
+    metrics:
+      receivers: [otlp]
+      processors: [signoztenantcontext, batch]
+      exporters: [signozclickhousemetrics]
+    logs:
+      receivers: [otlp]
+      processors: [signoztenantcontext, batch]
+      exporters: [clickhouselogsexporter]
+    # Host metrics are collected locally and do not have an OTLP ingestion key.
+    # Keep them outside the authenticated OTLP pipeline.
+    metrics/host:
+      receivers: [hostmetrics]
+      processors: [batch]
+      exporters: [signozclickhousemetrics]

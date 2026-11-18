@@ -58,3 +58,22 @@ service:
 If traces are transformed into span-derived metrics, place `signoztenantcontext` **before** the span-metrics processor so generated metrics retain the trusted tenant labels. Apply the same ordering to any connector or processor that aggregates, drops, or rewrites resource attributes. Do not expose an unauthenticated OTLP receiver that writes into the same tenant-scoped storage path.
 
 This is a wiring example, not a replacement for the deployment's full exporter, queue, retry, and resource-limit configuration. Keep existing processors and exporters, adding the tenant processor at the earliest safe position in each signal pipeline.
+
+
+## Community Edition multi-tenant overlay
+
+The repository includes `config/multitenant-config.yaml` as an overlay for the stock default configuration. Load both files, in order, for example:
+
+```sh
+./signoz-otel-collector --config=config/default-config.yaml --config=config/multitenant-config.yaml
+```
+
+Set `SIGNOZ_INTERNAL_INGESTION_RESOLVER_TOKEN` in the collector environment and replace the resolver URL with the SigNoz API endpoint reachable from the collector. The overlay:
+
+- enables ingestion-key authentication on OTLP gRPC and HTTP;
+- removes the unauthenticated Jaeger receiver from the traces pipeline;
+- runs `signoztenantcontext` before span-derived metric generation and before batching on all OTLP signal pipelines;
+- keeps host metrics in a separate non-OTLP pipeline, so local host telemetry is not rejected for lacking an ingestion-key identity;
+- adds `signoz.org.id` and `signoz.project.id` as span-metric dimensions, so generated metric datapoints retain tenant labels.
+
+Do not expose a second unauthenticated OTLP receiver or another receiver writing into the same tenant-scoped storage path. Treat this overlay as the multi-tenant deployment profile; do not apply it to a legacy single-tenant deployment without configuring the resolver and issuing project ingestion keys.

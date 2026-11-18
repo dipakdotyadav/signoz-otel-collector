@@ -1667,3 +1667,44 @@ func TestSkipSpansOlderThan(t *testing.T) {
 		require.NotEqual(t, 0, len(p.callHistograms))
 	})
 }
+
+
+func TestBuildDimensionKVsIncludesTrustedTenantResourceAttributes(t *testing.T) {
+	factory := NewFactory()
+	cfg := factory.CreateDefaultConfig().(*Config)
+	cfg.DimensionsCacheSize = 10
+	cfg.Dimensions = []Dimension{
+		{Name: "signoz.org.id"},
+		{Name: "signoz.project.id"},
+	}
+
+	p, err := newProcessor(zaptest.NewLogger(t), testID, cfg, nil)
+	require.NoError(t, err)
+
+	resourceAttrs := pcommon.NewMap()
+	resourceAttrs.PutStr("signoz.org.id", "org-trusted")
+	resourceAttrs.PutStr("signoz.project.id", "project-trusted")
+	span := ptrace.NewSpan()
+
+	for name, dimensions := range map[string]pcommon.Map{
+		"standard": p.buildDimensionKVs("checkout", span, p.dimensions, resourceAttrs),
+		"custom":   p.buildCustomDimensionKVs("checkout", span, p.dimensions, resourceAttrs, nil),
+	} {
+		t.Run(name, func(t *testing.T) {
+			org, ok := dimensions.Get("signoz.org.id")
+			require.True(t, ok, "generated datapoint must include the organization label")
+			require.Equal(t, "org-trusted", org.Str())
+
+			project, ok := dimensions.Get("signoz.project.id")
+			require.True(t, ok, "generated datapoint must include the project label")
+			require.Equal(t, "project-trusted", project.Str())
+
+			// The processor also emits resource-prefixed aliases for dimensions
+			// sourced from resource attributes. The canonical keys above are
+			// what the metrics storage query path uses for tenant filtering.
+			resourceProject, ok := dimensions.Get("resource_signoz.project.id")
+			require.True(t, ok)
+			require.Equal(t, "project-trusted", resourceProject.Str())
+		})
+	}
+}
