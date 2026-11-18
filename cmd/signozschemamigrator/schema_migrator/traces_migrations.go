@@ -2261,5 +2261,64 @@ var TracesMigrations = []SchemaMigrationRecord{
 			},
 		},
 	},
-	// add new new migration to test file for sync/async check as well
+	// add new new migration to test file for sync/async check as well,
+
+	{
+		MigrationID: 1019,
+		UpItems: []Operation{
+			// Persist trusted tenant identity with trace tag values. Existing
+			// historical rows receive empty defaults and are not attributed to
+			// any project by inference.
+			AlterTableAddColumn{
+				Database: "signoz_traces",
+				Table:    "tag_attributes_v2",
+				Column: Column{Name: "org_id", Type: ColumnTypeString, Default: "''", Codec: "ZSTD(1)"},
+			},
+			AlterTableAddColumn{
+				Database: "signoz_traces",
+				Table:    "tag_attributes_v2",
+				Column: Column{Name: "project_id", Type: ColumnTypeString, Default: "''", Codec: "ZSTD(1)"},
+			},
+			AlterTableAddColumn{
+				Database: "signoz_traces",
+				Table:    "distributed_tag_attributes_v2",
+				Column: Column{Name: "org_id", Type: ColumnTypeString, Default: "''", Codec: "ZSTD(1)"},
+			},
+			AlterTableAddColumn{
+				Database: "signoz_traces",
+				Table:    "distributed_tag_attributes_v2",
+				Column: Column{Name: "project_id", Type: ColumnTypeString, Default: "''", Codec: "ZSTD(1)"},
+			},
+			AlterTableAddColumn{
+				Database: "signoz_traces",
+				Table:    "span_attributes_keys",
+				Column: Column{Name: "org_id", Type: ColumnTypeString, Default: "''", Codec: "ZSTD(1)"},
+			},
+			AlterTableAddColumn{
+				Database: "signoz_traces",
+				Table:    "span_attributes_keys",
+				Column: Column{Name: "project_id", Type: ColumnTypeString, Default: "''", Codec: "ZSTD(1)"},
+			},
+			AlterTableAddColumn{
+				Database: "signoz_traces",
+				Table:    "distributed_span_attributes_keys",
+				Column: Column{Name: "org_id", Type: ColumnTypeString, Default: "''", Codec: "ZSTD(1)"},
+			},
+			AlterTableAddColumn{
+				Database: "signoz_traces",
+				Table:    "distributed_span_attributes_keys",
+				Column: Column{Name: "project_id", Type: ColumnTypeString, Default: "''", Codec: "ZSTD(1)"},
+			},
+		},
+		DownItems: []Operation{
+			AlterTableDropColumn{Database: "signoz_traces", Table: "distributed_span_attributes_keys", Column: Column{Name: "project_id"}},
+			AlterTableDropColumn{Database: "signoz_traces", Table: "distributed_span_attributes_keys", Column: Column{Name: "org_id"}},
+			AlterTableDropColumn{Database: "signoz_traces", Table: "span_attributes_keys", Column: Column{Name: "project_id"}},
+			AlterTableDropColumn{Database: "signoz_traces", Table: "span_attributes_keys", Column: Column{Name: "org_id"}},
+			AlterTableDropColumn{Database: "signoz_traces", Table: "distributed_tag_attributes_v2", Column: Column{Name: "project_id"}},
+			AlterTableDropColumn{Database: "signoz_traces", Table: "distributed_tag_attributes_v2", Column: Column{Name: "org_id"}},
+			AlterTableDropColumn{Database: "signoz_traces", Table: "tag_attributes_v2", Column: Column{Name: "project_id"}},
+			AlterTableDropColumn{Database: "signoz_traces", Table: "tag_attributes_v2", Column: Column{Name: "org_id"}},
+		},
+	},
 }
