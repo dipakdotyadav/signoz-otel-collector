@@ -148,6 +148,10 @@ type SpanV3 struct {
 
 	StartTimeUnixNano uint64 `json:"startTimeUnixNano,omitempty"`
 
+	// Trusted tenant identity injected by the ingestion authentication processor.
+	OrgID     string `json:"-"`
+	ProjectID string `json:"-"`
+
 	TraceId      string `json:"traceId,omitempty"`
 	SpanId       string `json:"spanId,omitempty"`
 	TraceState   string `json:"traceState,omitempty"`
