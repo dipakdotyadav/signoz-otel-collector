@@ -3,6 +3,9 @@ package signozingestionkeyauthextension
 import (
 	"context"
 	"errors"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -52,4 +55,21 @@ func TestAuthenticateFailsClosed(t *testing.T) {
 	}
 	_, err := a.Authenticate(context.Background(), map[string][]string{"signoz-ingestion-key": {"bad"}})
 	require.ErrorIs(t, err, errInvalidCredential)
+}
+
+func TestHTTPResolverUsesPrivateTokenAndSigNozEnvelope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "internal-secret", r.Header.Get(internalTokenHeader))
+		var req resolveRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		require.Equal(t, "opaque-key", req.IngestionKey)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"success","data":{"orgId":"org-1","projectId":"project-1"}}`))
+	}))
+	defer server.Close()
+
+	resolver := &httpIdentityResolver{endpoint: server.URL, token: "internal-secret", client: server.Client()}
+	got, err := resolver.Resolve(context.Background(), "opaque-key")
+	require.NoError(t, err)
+	require.Equal(t, tenantIdentity{OrgID: "org-1", ProjectID: "project-1"}, got)
 }
