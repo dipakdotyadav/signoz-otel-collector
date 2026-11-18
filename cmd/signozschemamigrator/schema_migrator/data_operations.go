@@ -63,3 +63,23 @@ func (i InsertIntoTable) ToSQL() string {
 	sql.WriteString(i.Values)
 	return sql.String()
 }
+
+
+type InsertSelectOperation struct {
+	Database string
+	Table    string
+	Query    string
+}
+
+func (i InsertSelectOperation) OnCluster(string) Operation { return i }
+func (i InsertSelectOperation) WithReplication() Operation { return i }
+func (i InsertSelectOperation) ShouldWaitForDistributionQueue() (bool, string, string) {
+	return false, i.Database, i.Table
+}
+func (i InsertSelectOperation) IsMutation() bool { return false }
+func (i InsertSelectOperation) IsIdempotent() bool { return false }
+func (i InsertSelectOperation) IsLightweight() bool { return false }
+func (i InsertSelectOperation) ForceMigrate() bool { return false }
+func (i InsertSelectOperation) ToSQL() string {
+	return "INSERT INTO " + i.Database + "." + i.Table + " " + i.Query
+}
