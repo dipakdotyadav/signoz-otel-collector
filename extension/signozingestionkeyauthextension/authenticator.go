@@ -126,8 +126,11 @@ type resolveRequest struct {
 }
 
 type resolveResponse struct {
-	OrgID     string `json:"orgId"`
-	ProjectID string `json:"projectId"`
+	Status string `json:"status"`
+	Data struct {
+		OrgID     string `json:"orgId"`
+		ProjectID string `json:"projectId"`
+	} `json:"data"`
 }
 
 func (r *httpIdentityResolver) Resolve(ctx context.Context, secret string) (tenantIdentity, error) {
@@ -155,8 +158,8 @@ func (r *httpIdentityResolver) Resolve(ctx context.Context, secret string) (tena
 	if err := decoder.Decode(&result); err != nil {
 		return tenantIdentity{}, err
 	}
-	if strings.TrimSpace(result.OrgID) == "" || strings.TrimSpace(result.ProjectID) == "" {
+	if result.Status != "success" || strings.TrimSpace(result.Data.OrgID) == "" || strings.TrimSpace(result.Data.ProjectID) == "" {
 		return tenantIdentity{}, errInvalidCredential
 	}
-	return tenantIdentity{OrgID: result.OrgID, ProjectID: result.ProjectID}, nil
+	return tenantIdentity{OrgID: result.Data.OrgID, ProjectID: result.Data.ProjectID}, nil
 }
