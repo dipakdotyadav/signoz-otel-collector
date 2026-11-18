@@ -2378,6 +2378,8 @@ var TracesMigrations = []SchemaMigrationRecord{
 				},
 				Engine: ReplacingMergeTree{MergeTree: MergeTree{
 					OrderBy: "(org_id, project_id, tagKey, tagType, dataType, isColumn)",
+					TTL: "timestamp + INTERVAL 15 DAY",
+					Settings: TableSettings{{Name: "index_granularity", Value: "8192"}, {Name: "ttl_only_drop_parts", Value: "1"}},
 				}},
 			},
 			CreateTableOperation{
