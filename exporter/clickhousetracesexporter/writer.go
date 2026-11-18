@@ -360,9 +360,8 @@ func (w *SpanWriter) writeTagBatchV3(ctx context.Context, batchSpans []*SpanV3) 
 
 	mapOfSpanFields := make(map[spanFieldDedupeKey]struct{})
 	spanFields := make([]spanFieldRow, 0, 16)
-	skippedSpanFields := skippedSpanFieldColumns(shouldSkipKeys)
-
 	for _, span := range batchSpans {
+		skippedSpanFields := skippedSpanFieldColumnsForTenant(shouldSkipKeys, span.OrgID, span.ProjectID)
 		unixMilli := (int64(span.StartTimeUnixNano/1e6) / 3600000) * 3600000
 
 		for _, spanAttribute := range span.SpanAttributes {
@@ -403,7 +402,7 @@ func (w *SpanWriter) writeTagBatchV3(ctx context.Context, batchSpans []*SpanV3) 
 			}
 			// add mapOfSpanAttributeKey to map
 			mapOfSpanAttributeKeys[mapOfSpanAttributeKey] = struct{}{}
-			v2Key := utils.MakeKeyForAttributeKeys(spanAttribute.Key, utils.TagType(spanAttribute.TagType), utils.FieldDataType(spanAttribute.DataType))
+			v2Key := span.OrgID + "\x00" + span.ProjectID + "\x00" + utils.MakeKeyForAttributeKeys(spanAttribute.Key, utils.TagType(spanAttribute.TagType), utils.FieldDataType(spanAttribute.DataType))
 
 			if len(spanAttribute.StringValue) > common.MaxAttributeValueLength {
 				w.logger.Debug("attribute value length exceeds the limit", zap.String("key", spanAttribute.Key))
@@ -655,4 +654,18 @@ func (w *SpanWriter) Close() error {
 		return w.db.Close()
 	}
 	return nil
+}
+
+// skippedSpanFieldColumnsForTenant resolves high-cardinality exclusions for
+// one authenticated tenant. Cardinality in another project must not suppress
+// metadata values in this project.
+func skippedSpanFieldColumnsForTenant(shouldSkipKeys map[string]shouldSkipKey, orgID, projectID string) map[string]struct{} {
+	scoped := make(map[string]shouldSkipKey, len(shouldSkipKeys))
+	prefix := orgID + "\x00" + projectID + "\x00"
+	for key, value := range shouldSkipKeys {
+		if strings.HasPrefix(key, prefix) {
+			scoped[strings.TrimPrefix(key, prefix)] = value
+		}
+	}
+	return skippedSpanFieldColumns(scoped)
 }
