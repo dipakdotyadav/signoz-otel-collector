@@ -147,7 +147,7 @@ func TestSkippedSpanFieldColumnsForTenant(t *testing.T) {
 		},
 		orgID + "\x00" + otherProjectID + "\x00" + key: {
 			OrgID: orgID, ProjectID: otherProjectID, TagKey: "http_url",
-			TagType: utils.TagTypeSpanField.String(), TagDataType: utils.FieldDataTypeString.String(),
+			TagType: string(utils.TagTypeSpanField), TagDataType: string(utils.FieldDataTypeString),
 		},
 	}
 
