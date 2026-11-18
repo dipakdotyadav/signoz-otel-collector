@@ -7,6 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/client"
 	"go.opentelemetry.io/collector/pdata/pcommon"
+	"go.opentelemetry.io/collector/pdata/plog"
+	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 )
 
@@ -63,4 +65,28 @@ func TestApplyTenant(t *testing.T) {
 	project, _ := attrs.Get(projectAttribute)
 	require.Equal(t, "org-1", org.Str())
 	require.Equal(t, "project-1", project.Str())
+}
+
+
+func TestProcessMetricsAndLogsApplyTrustedTenant(t *testing.T) {
+	ctx := client.NewContext(context.Background(), client.Info{Auth: tenantAuth{orgID: "org-trusted", projectID: "project-trusted"}})
+	processor := newProcessor("signoztenantcontext")
+
+	metrics := pmetric.NewMetrics()
+	metricResource := metrics.ResourceMetrics().AppendEmpty().Resource()
+	metricResource.Attributes().PutStr(projectAttribute, "forged")
+	gotMetrics, err := processor.processMetrics(ctx, metrics)
+	require.NoError(t, err)
+	metricProject, ok := gotMetrics.ResourceMetrics().At(0).Resource().Attributes().Get(projectAttribute)
+	require.True(t, ok)
+	require.Equal(t, "project-trusted", metricProject.Str())
+
+	logs := plog.NewLogs()
+	logResource := logs.ResourceLogs().AppendEmpty().Resource()
+	logResource.Attributes().PutStr(orgAttribute, "forged")
+	gotLogs, err := processor.processLogs(ctx, logs)
+	require.NoError(t, err)
+	logOrg, ok := gotLogs.ResourceLogs().At(0).Resource().Attributes().Get(orgAttribute)
+	require.True(t, ok)
+	require.Equal(t, "org-trusted", logOrg.Str())
 }
