@@ -298,6 +298,15 @@ func newStructuredSpanV3(bucketStart uint64, fingerprint string, otelSpan ptrace
 	resourceAttrs := map[string]string{}
 	billableResourceAttrs := map[string]string{}
 
+	orgID := ""
+	projectID := ""
+	if value, ok := resource.Attributes().Get("signoz.org.id"); ok {
+		orgID = value.AsString()
+	}
+	if value, ok := resource.Attributes().Get("signoz.project.id"); ok {
+		projectID = value.AsString()
+	}
+
 	otelSpan.Attributes().Range(func(k string, v pcommon.Value) bool {
 		attrMap.add(k, v)
 		return true
@@ -356,6 +365,9 @@ func newStructuredSpanV3(bucketStart uint64, fingerprint string, otelSpan ptrace
 		FingerPrint:   fingerprint,
 
 		StartTimeUnixNano: uint64(otelSpan.StartTimestamp()),
+
+		OrgID:     orgID,
+		ProjectID: projectID,
 
 		TraceId:      utils.TraceIDToHexOrEmptyString(otelSpan.TraceID()),
 		SpanId:       utils.SpanIDToHexOrEmptyString(otelSpan.SpanID()),
