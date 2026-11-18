@@ -1708,3 +1708,57 @@ func TestBuildDimensionKVsIncludesTrustedTenantResourceAttributes(t *testing.T) 
 		})
 	}
 }
+
+
+func TestBuildMetricsEmitsTenantLabelsOnDatapoints(t *testing.T) {
+	cfg := NewFactory().CreateDefaultConfig().(*Config)
+	cfg.DimensionsCacheSize = 10
+	cfg.Dimensions = []Dimension{
+		{Name: "signoz.org.id"},
+		{Name: "signoz.project.id"},
+	}
+	p, err := newProcessor(zaptest.NewLogger(t), testID, cfg, nil)
+	require.NoError(t, err)
+
+	resourceAttrs := pcommon.NewMap()
+	resourceAttrs.PutStr(conventions.AttributeServiceName, "checkout")
+	resourceAttrs.PutStr("signoz.org.id", "org-trusted")
+	resourceAttrs.PutStr("signoz.project.id", "project-trusted")
+
+	span := ptrace.NewSpan()
+	span.SetName("/orders")
+	span.SetKind(ptrace.SpanKindServer)
+	now := pcommon.NewTimestampFromTime(time.Now())
+	span.SetStartTimestamp(now)
+	span.SetEndTimestamp(now + pcommon.Timestamp(10*time.Millisecond))
+	span.Status().SetCode(ptrace.StatusCodeOk)
+
+	p.aggregateMetricsForSpan("checkout", span, resourceAttrs)
+	metrics, err := p.buildMetrics()
+	require.NoError(t, err)
+
+	var foundTenantLabels bool
+	for i := 0; i < metrics.ResourceMetrics().Len(); i++ {
+		resourceMetrics := metrics.ResourceMetrics().At(i)
+		for j := 0; j < resourceMetrics.ScopeMetrics().Len(); j++ {
+			scopeMetrics := resourceMetrics.ScopeMetrics().At(j)
+			for k := 0; k < scopeMetrics.Metrics().Len(); k++ {
+				metric := scopeMetrics.Metrics().At(k)
+				if metric.Name() != "signoz_latency" || metric.Type() != pmetric.MetricTypeHistogram {
+					continue
+				}
+				dataPoints := metric.Histogram().DataPoints()
+				require.NotZero(t, dataPoints.Len())
+				attrs := dataPoints.At(0).Attributes()
+				org, ok := attrs.Get("signoz.org.id")
+				require.True(t, ok)
+				require.Equal(t, "org-trusted", org.Str())
+				project, ok := attrs.Get("signoz.project.id")
+				require.True(t, ok)
+				require.Equal(t, "project-trusted", project.Str())
+				foundTenantLabels = true
+			}
+		}
+	}
+	require.True(t, foundTenantLabels, "expected generated span metrics to contain tenant labels")
+}
