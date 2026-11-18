@@ -13,6 +13,7 @@ import (
 	signozhealthcheckextension "github.com/SigNoz/signoz-otel-collector/extension/healthcheckextension"
 	_ "github.com/SigNoz/signoz-otel-collector/pkg/parser/grok"
 	"github.com/SigNoz/signoz-otel-collector/processor/signozllmpricingprocessor"
+	"github.com/SigNoz/signoz-otel-collector/processor/signoztenantcontextprocessor"
 	"github.com/SigNoz/signoz-otel-collector/processor/signozlogsnormalizerprocessor"
 	"github.com/SigNoz/signoz-otel-collector/processor/signozlogspipelineprocessor"
 	"github.com/SigNoz/signoz-otel-collector/processor/signozspanmapperprocessor"
@@ -416,6 +417,7 @@ func Components() (otelcol.Factories, error) {
 		signozlogsnormalizerprocessor.NewFactory(),
 		signozspanmapperprocessor.NewFactory(),
 		signozllmpricingprocessor.NewFactory(),
+		signoztenantcontextprocessor.NewFactory(),
 	}
 
 	connectors := []connector.Factory{
