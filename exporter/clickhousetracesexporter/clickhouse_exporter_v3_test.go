@@ -721,13 +721,15 @@ func TestExporterInit(t *testing.T) {
 	}
 
 	cols := make([]cmock.ColumnType, 0)
+	cols = append(cols, cmock.ColumnType{Name: "org_id", Type: "String"})
+	cols = append(cols, cmock.ColumnType{Name: "project_id", Type: "String"})
 	cols = append(cols, cmock.ColumnType{Name: "tag_key", Type: "String"})
 	cols = append(cols, cmock.ColumnType{Name: "tag_type", Type: "String"})
 	cols = append(cols, cmock.ColumnType{Name: "tag_data_type", Type: "String"})
 	cols = append(cols, cmock.ColumnType{Name: "string_count", Type: "UInt64"})
 	cols = append(cols, cmock.ColumnType{Name: "number_count", Type: "UInt64"})
 
-	rows := cmock.NewRows(cols, [][]interface{}{{"key1", "string", "string", 2, 1}, {"key2", "number", "number", 1, 2}})
+	rows := cmock.NewRows(cols, [][]interface{}{{"", "", "key1", "string", "string", 2, 1}, {"", "", "key2", "number", "number", 1, 2}})
 
 	mock.ExpectSelect(".*SETTINGS max_threads = 2").WillReturnRows(rows)
 
@@ -751,8 +753,8 @@ func TestExporterPushTracesData(t *testing.T) {
 	// expect prepare batch for 5 tables
 	indexV3Statement := mock.ExpectPrepareBatch("INSERT INTO signoz_traces.distributed_signoz_index_v3")
 	errorIndexV2Statement := mock.ExpectPrepareBatch("INSERT INTO signoz_traces.distributed_signoz_error_index_v2")
-	attributeKeysStmt := mock.ExpectPrepareBatch("INSERT INTO signoz_traces.distributed_span_attributes_keys")
-	tagAttributesV2Statement := mock.ExpectPrepareBatch("INSERT INTO signoz_traces.distributed_tag_attributes_v2")
+	attributeKeysStmt := mock.ExpectPrepareBatch("INSERT INTO signoz_traces.distributed_span_attributes_keys_v2")
+	tagAttributesV2Statement := mock.ExpectPrepareBatch("INSERT INTO signoz_traces.distributed_tag_attributes_v3")
 	resourceStatement := mock.ExpectPrepareBatch("INSERT INTO signoz_traces.distributed_traces_v3_resource")
 
 	indexV3Statement.ExpectAppend()
