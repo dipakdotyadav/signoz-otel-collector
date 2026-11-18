@@ -427,3 +427,69 @@ func Benchmark_prepareBatchGaugeWithReduction50k(b *testing.B) {
 		exp.prepareBatch(context.Background(), metrics)
 	}
 }
+
+
+func Test_reductionAlwaysPreservesTenantIdentity(t *testing.T) {
+	const orgID = "org-trusted"
+	projectIDs := []string{"project-a", "project-b"}
+
+	for _, mode := range []string{"drop", "keep"} {
+		t.Run(mode, func(t *testing.T) {
+			keys := labelSet("signoz.org.id", "signoz.project.id")
+			keep := false
+			if mode == "keep" {
+				keys = labelSet("resource.keep")
+				keep = true
+			}
+			exp := newReductionExporter(t, ruleSet{
+				"tenant.metric": {keys: keys, keep: keep},
+			})
+
+			metrics := pmetric.NewMetrics()
+			for _, projectID := range projectIDs {
+				rm := metrics.ResourceMetrics().AppendEmpty()
+				rm.Resource().Attributes().PutStr("signoz.org.id", orgID)
+				rm.Resource().Attributes().PutStr("signoz.project.id", projectID)
+				rm.Resource().Attributes().PutStr("resource.drop", "removed")
+				rm.Resource().Attributes().PutStr("resource.keep", "kept")
+				sm := rm.ScopeMetrics().AppendEmpty()
+				sm.Scope().SetName("test.scope")
+				metric := sm.Metrics().AppendEmpty()
+				metric.SetName("tenant.metric")
+				dp := metric.SetEmptyGauge().DataPoints().AppendEmpty()
+				dp.SetTimestamp(pcommon.NewTimestampFromTime(time.UnixMilli(1727286182000)))
+				dp.SetIntValue(1)
+			}
+
+			batch := exp.prepareBatch(context.Background(), metrics)
+			var reducedByProject = make(map[string]uint64)
+			for _, row := range batch.ts {
+				if !row.isReduced {
+					continue
+				}
+				assert.Equal(t, orgID, row.resourceAttrs["signoz.org.id"])
+				projectID := row.resourceAttrs["signoz.project.id"]
+				assert.Contains(t, projectIDs, projectID)
+				assert.Contains(t, row.labels, "signoz.org.id")
+				assert.Contains(t, row.labels, "signoz.project.id")
+				assert.NotContains(t, row.resourceAttrs, "resource.drop")
+				if mode == "keep" {
+					assert.Equal(t, "kept", row.resourceAttrs["resource.keep"])
+				}
+				reducedByProject[projectID] = row.fingerprint
+			}
+			require.Len(t, reducedByProject, 2, "both projects must retain distinct reduced series")
+			assert.NotEqual(t, reducedByProject["project-a"], reducedByProject["project-b"],
+				"reduced metric fingerprints must remain project-specific")
+		})
+	}
+}
+
+func Test_reductionRuleDropProtectsTenantLabelsInBothModes(t *testing.T) {
+	for _, keep := range []bool{false, true} {
+		rule := &reductionRule{keys: labelSet("signoz.org.id", "signoz.project.id"), keep: keep}
+		assert.False(t, rule.drop("signoz.org.id"))
+		assert.False(t, rule.drop("signoz.project.id"))
+	}
+}
+
