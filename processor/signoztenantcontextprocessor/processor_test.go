@@ -30,10 +30,14 @@ func (tenantAuth) GetAttributeNames() []string { return []string{"org_id", "proj
 func TestProcessTracesOverwritesClientTenantAttributes(t *testing.T) {
 	td := ptrace.NewTraces()
 	rs := td.ResourceSpans().AppendEmpty()
-	rs.Resource().Attributes().PutStr(orgAttribute, "forged-org")
-	rs.Resource().Attributes().PutStr(projectAttribute, "forged-project")
-	rs.Resource().Attributes().PutStr("org_id", "forged-alias")
-	rs.Resource().Attributes().PutStr("signoz-ingestion-key", "client-secret")
+	attrs := rs.Resource().Attributes()
+	attrs.PutStr(orgAttribute, "forged-org")
+	attrs.PutStr(projectAttribute, "forged-project")
+	attrs.PutStr("org_id", "forged-org-alias")
+	attrs.PutStr("project_id", "forged-project-alias")
+	attrs.PutStr("organization_id", "forged-organization-alias")
+	attrs.PutStr("signoz-ingestion-key", "client-secret")
+	attrs.PutStr("SIGNOZ-API-KEY", "client-api-key")
 
 	ctx := client.NewContext(context.Background(), client.Info{Auth: tenantAuth{orgID: "org-trusted", projectID: "project-trusted"}})
 	got, err := newProcessor("signoztenantcontext").processTraces(ctx, td)
@@ -46,10 +50,16 @@ func TestProcessTracesOverwritesClientTenantAttributes(t *testing.T) {
 	project, ok := attrs.Get(projectAttribute)
 	require.True(t, ok)
 	require.Equal(t, "project-trusted", project.Str())
-	_, ok = attrs.Get("org_id")
-	require.False(t, ok)
-	_, ok = attrs.Get("signoz-ingestion-key")
-	require.False(t, ok)
+	for _, untrustedKey := range []string{
+		"org_id",
+		"project_id",
+		"organization_id",
+		"signoz-ingestion-key",
+		"SIGNOZ-API-KEY",
+	} {
+		_, ok = attrs.Get(untrustedKey)
+		require.False(t, ok, "untrusted tenant alias %q must be removed", untrustedKey)
+	}
 }
 
 func TestTrustedTenantFailsClosed(t *testing.T) {
