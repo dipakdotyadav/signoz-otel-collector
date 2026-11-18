@@ -2320,8 +2320,7 @@ var TracesMigrations = []SchemaMigrationRecord{
 			AlterTableDropColumn{Database: "signoz_traces", Table: "tag_attributes_v2", Column: Column{Name: "project_id"}},
 			AlterTableDropColumn{Database: "signoz_traces", Table: "tag_attributes_v2", Column: Column{Name: "org_id"}},
 		},
-	},,
-
+	},
 	{
 		MigrationID: 1020,
 		UpItems: []Operation{
