@@ -68,6 +68,7 @@ func (i InsertIntoTable) ToSQL() string {
 type InsertSelectOperation struct {
 	Database string
 	Table    string
+	Columns  []string
 	Query    string
 }
 
@@ -81,5 +82,17 @@ func (i InsertSelectOperation) IsIdempotent() bool { return false }
 func (i InsertSelectOperation) IsLightweight() bool { return false }
 func (i InsertSelectOperation) ForceMigrate() bool { return false }
 func (i InsertSelectOperation) ToSQL() string {
-	return "INSERT INTO " + i.Database + "." + i.Table + " " + i.Query
+	var sql strings.Builder
+	sql.WriteString("INSERT INTO ")
+	sql.WriteString(i.Database)
+	sql.WriteString(".")
+	sql.WriteString(i.Table)
+	if len(i.Columns) > 0 {
+		sql.WriteString(" (")
+		sql.WriteString(strings.Join(i.Columns, ", "))
+		sql.WriteString(")")
+	}
+	sql.WriteString(" ")
+	sql.WriteString(i.Query)
+	return sql.String()
 }
