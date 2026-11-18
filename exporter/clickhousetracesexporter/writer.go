@@ -46,6 +46,8 @@ const (
 )
 
 type shouldSkipKey struct {
+	OrgID       string `ch:"org_id"`
+	ProjectID   string `ch:"project_id"`
 	TagKey      string `ch:"tag_key"`
 	TagType     string `ch:"tag_type"`
 	TagDataType string `ch:"tag_data_type"`
@@ -114,10 +116,10 @@ func NewSpanWriter(options ...WriterOption) *SpanWriter {
 // doFetchShouldSkipKeys contains the logic for fetching skip keys
 func (e *SpanWriter) doFetchShouldSkipKeys() {
 	query := fmt.Sprintf(`
-		SELECT tag_key, tag_type, tag_data_type, countDistinct(string_value) as string_count, countDistinct(number_value) as number_count
+		SELECT org_id, project_id, tag_key, tag_type, tag_data_type, countDistinct(string_value) as string_count, countDistinct(number_value) as number_count
 		FROM %s.%s
 		WHERE unix_milli >= (toUnixTimestamp(now() - toIntervalHour(6)) * 1000)
-		GROUP BY tag_key, tag_type, tag_data_type
+		GROUP BY org_id, project_id, tag_key, tag_type, tag_data_type
 		HAVING string_count > %d OR number_count > %d
 		SETTINGS max_threads = 2`, e.traceDatabase, e.attributeTableV2, e.maxDistinctValues, e.maxDistinctValues)
 
@@ -132,7 +134,7 @@ func (e *SpanWriter) doFetchShouldSkipKeys() {
 
 	shouldSkipKeys := make(map[string]shouldSkipKey)
 	for _, key := range keys {
-		mapKey := utils.MakeKeyForAttributeKeys(key.TagKey, utils.TagType(key.TagType), utils.FieldDataType(key.TagDataType))
+		mapKey := key.OrgID + "\x00" + key.ProjectID + "\x00" + utils.MakeKeyForAttributeKeys(key.TagKey, utils.TagType(key.TagType), utils.FieldDataType(key.TagDataType))
 		e.logger.Debug("adding to should skip keys", zap.String("key", mapKey), zap.Any("string_count", key.StringCount), zap.Any("number_count", key.NumberCount))
 		shouldSkipKeys[mapKey] = key
 	}
@@ -366,7 +368,7 @@ func (w *SpanWriter) writeTagBatchV3(ctx context.Context, batchSpans []*SpanV3) 
 		for _, spanAttribute := range span.SpanAttributes {
 
 			// form a map key of span attribute key, tagType, dataType, isColumn and value
-			mapOfSpanAttributeValueKey := spanAttribute.Key + spanAttribute.TagType + spanAttribute.DataType + spanAttribute.StringValue + strconv.FormatFloat(spanAttribute.NumberValue, 'f', -1, 64)
+			mapOfSpanAttributeValueKey := span.OrgID + "\x00" + span.ProjectID + "\x00" + spanAttribute.Key + spanAttribute.TagType + spanAttribute.DataType + spanAttribute.StringValue + strconv.FormatFloat(spanAttribute.NumberValue, 'f', -1, 64)
 
 			// check if mapOfSpanAttributeValueKey already exists in map
 			_, ok := mapOfSpanAttributeValues[mapOfSpanAttributeValueKey]
@@ -377,7 +379,7 @@ func (w *SpanWriter) writeTagBatchV3(ctx context.Context, batchSpans []*SpanV3) 
 			mapOfSpanAttributeValues[mapOfSpanAttributeValueKey] = struct{}{}
 
 			// form a map key of span attribute key, tagType, dataType and isColumn
-			mapOfSpanAttributeKey := spanAttribute.Key + spanAttribute.TagType + spanAttribute.DataType + strconv.FormatBool(spanAttribute.IsColumn)
+			mapOfSpanAttributeKey := span.OrgID + "\x00" + span.ProjectID + "\x00" + spanAttribute.Key + spanAttribute.TagType + spanAttribute.DataType + strconv.FormatBool(spanAttribute.IsColumn)
 
 			// check if mapOfSpanAttributeKey already exists in map
 			_, ok = mapOfSpanAttributeKeys[mapOfSpanAttributeKey]
@@ -388,6 +390,8 @@ func (w *SpanWriter) writeTagBatchV3(ctx context.Context, batchSpans []*SpanV3) 
 						spanAttribute.TagType,
 						spanAttribute.DataType,
 						spanAttribute.IsColumn,
+						span.OrgID,
+						span.ProjectID,
 					)
 					if err != nil {
 						return fmt.Errorf("could not append span to tagKey Statement to batch due to error: %w", err)
@@ -417,6 +421,8 @@ func (w *SpanWriter) writeTagBatchV3(ctx context.Context, batchSpans []*SpanV3) 
 						spanAttribute.DataType,
 						spanAttribute.StringValue,
 						nil,
+						span.OrgID,
+						span.ProjectID,
 					)
 				}
 			case "float64":
@@ -429,6 +435,8 @@ func (w *SpanWriter) writeTagBatchV3(ctx context.Context, batchSpans []*SpanV3) 
 						spanAttribute.DataType,
 						nil,
 						spanAttribute.NumberValue,
+						span.OrgID,
+						span.ProjectID,
 					)
 				}
 			case "bool":
@@ -441,6 +449,8 @@ func (w *SpanWriter) writeTagBatchV3(ctx context.Context, batchSpans []*SpanV3) 
 						spanAttribute.DataType,
 						nil,
 						nil,
+						span.OrgID,
+						span.ProjectID,
 					)
 				}
 			}
@@ -464,6 +474,7 @@ func (w *SpanWriter) writeTagBatchV3(ctx context.Context, batchSpans []*SpanV3) 
 			}
 
 			dedupeKey := row.dedupeKey()
+			dedupeKey.key = span.OrgID + "\x00" + span.ProjectID + "\x00" + dedupeKey.key
 			if _, ok := mapOfSpanFields[dedupeKey]; ok {
 				continue
 			}
@@ -477,7 +488,7 @@ func (w *SpanWriter) writeTagBatchV3(ctx context.Context, batchSpans []*SpanV3) 
 				numberValue = row.numberValue
 			}
 			// TODO: handle error
-			_ = tagStatementV2.Append(unixMilli, row.key, utils.TagTypeSpanField, row.dataType, stringValue, numberValue)
+			_ = tagStatementV2.Append(unixMilli, row.key, utils.TagTypeSpanField, row.dataType, stringValue, numberValue, span.OrgID, span.ProjectID)
 		}
 	}
 
