@@ -431,8 +431,6 @@ func Test_newStructuredSpanV3(t *testing.T) {
 					"mymap.map_double": "20.5",
 					"mymap.map_key":    "map_val",
 					"service.name":     "test_service",
-					"signoz.org.id":    "org-123",
-					"signoz.project.id": "project-456",
 					"num":              "10",
 				},
 
