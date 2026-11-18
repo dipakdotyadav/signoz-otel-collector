@@ -133,3 +133,25 @@ func TestSpanFieldRowDedupeKey(t *testing.T) {
 	assert.NotEqual(t, sameColumnDifferentValues[0].dedupeKey(), sameColumnDifferentValues[1].dedupeKey(), "two values of one column must yield two rows")
 	assert.Equal(t, sameRowTwice[0].dedupeKey(), sameRowTwice[1].dedupeKey(), "the same row from two spans is written once per batch")
 }
+
+
+func TestSkippedSpanFieldColumnsForTenant(t *testing.T) {
+	orgID := "org-a"
+	projectID := "project-a"
+	otherProjectID := "project-b"
+	key := utils.MakeKeyForAttributeKeys("http_url", utils.TagTypeSpanField, utils.FieldDataTypeString)
+	skips := map[string]shouldSkipKey{
+		orgID + "\x00" + projectID + "\x00" + key: {
+			OrgID: orgID, ProjectID: projectID, TagKey: "http_url",
+			TagType: utils.TagTypeSpanField.String(), TagDataType: utils.FieldDataTypeString.String(),
+		},
+		orgID + "\x00" + otherProjectID + "\x00" + key: {
+			OrgID: orgID, ProjectID: otherProjectID, TagKey: "http_url",
+			TagType: utils.TagTypeSpanField.String(), TagDataType: utils.FieldDataTypeString.String(),
+		},
+	}
+
+	assert.Equal(t, map[string]struct{}{"http_url": {}}, skippedSpanFieldColumnsForTenant(skips, orgID, projectID))
+	assert.Equal(t, map[string]struct{}{"http_url": {}}, skippedSpanFieldColumnsForTenant(skips, orgID, otherProjectID))
+	assert.Empty(t, skippedSpanFieldColumnsForTenant(skips, "org-b", projectID))
+}
