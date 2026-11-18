@@ -35,3 +35,18 @@ func TestInsertIntoTable(t *testing.T) {
 		})
 	}
 }
+
+
+func TestInsertSelectOperation(t *testing.T) {
+	op := InsertSelectOperation{
+		Database: "signoz_traces",
+		Table:    "distributed_tag_attributes_v3",
+		Query:    "SELECT unix_milli, tag_key FROM signoz_traces.distributed_tag_attributes_v2",
+	}
+	require.Equal(t,
+		"INSERT INTO signoz_traces.distributed_tag_attributes_v3 SELECT unix_milli, tag_key FROM signoz_traces.distributed_tag_attributes_v2",
+		op.ToSQL(),
+	)
+	require.False(t, op.IsIdempotent())
+	require.False(t, op.IsLightweight())
+}
