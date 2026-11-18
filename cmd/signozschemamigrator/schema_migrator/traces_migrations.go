@@ -2320,5 +2320,96 @@ var TracesMigrations = []SchemaMigrationRecord{
 			AlterTableDropColumn{Database: "signoz_traces", Table: "tag_attributes_v2", Column: Column{Name: "project_id"}},
 			AlterTableDropColumn{Database: "signoz_traces", Table: "tag_attributes_v2", Column: Column{Name: "org_id"}},
 		},
+	},,
+
+	{
+		MigrationID: 1020,
+		UpItems: []Operation{
+			CreateTableOperation{
+				Database: "signoz_traces",
+				Table:    "tag_attributes_v3",
+				Columns: []Column{
+					{Name: "unix_milli", Type: ColumnTypeInt64, Codec: "Delta(8), ZSTD(1)"},
+					{Name: "tag_key", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "tag_type", Type: LowCardinalityColumnType{ColumnTypeString}, Codec: "ZSTD(1)"},
+					{Name: "tag_data_type", Type: LowCardinalityColumnType{ColumnTypeString}, Codec: "ZSTD(1)"},
+					{Name: "string_value", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "number_value", Type: NullableColumnType{ColumnTypeFloat64}, Codec: "ZSTD(1)"},
+					{Name: "org_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "project_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+				},
+				Indexes: []Index{
+					{Name: "string_value_index", Expression: "string_value", Type: "ngrambf_v1(4, 1024, 3, 0)", Granularity: 1},
+					{Name: "number_value_index", Expression: "number_value", Type: "minmax", Granularity: 1},
+				},
+				Engine: ReplacingMergeTree{MergeTree: MergeTree{
+					PartitionBy: "toDate(unix_milli / 1000)",
+					OrderBy: "(org_id, project_id, tag_key, tag_type, tag_data_type, string_value, number_value)",
+					TTL: "toDateTime(unix_milli / 1000) + toIntervalSecond(1296000)",
+					Settings: TableSettings{{Name: "index_granularity", Value: "8192"}, {Name: "ttl_only_drop_parts", Value: "1"}, {Name: "allow_nullable_key", Value: "1"}},
+				}},
+			},
+			CreateTableOperation{
+				Database: "signoz_traces",
+				Table:    "distributed_tag_attributes_v3",
+				Columns: []Column{
+					{Name: "unix_milli", Type: ColumnTypeInt64, Codec: "Delta(8), ZSTD(1)"},
+					{Name: "tag_key", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "tag_type", Type: LowCardinalityColumnType{ColumnTypeString}, Codec: "ZSTD(1)"},
+					{Name: "tag_data_type", Type: LowCardinalityColumnType{ColumnTypeString}, Codec: "ZSTD(1)"},
+					{Name: "string_value", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "number_value", Type: NullableColumnType{ColumnTypeFloat64}, Codec: "ZSTD(1)"},
+					{Name: "org_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "project_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+				},
+				Engine: Distributed{Database: "signoz_traces", Table: "tag_attributes_v3", ShardingKey: "cityHash64(org_id, project_id, tag_key)"},
+			},
+			CreateTableOperation{
+				Database: "signoz_traces",
+				Table:    "span_attributes_keys_v2",
+				Columns: []Column{
+					{Name: "tagKey", Type: LowCardinalityColumnType{ColumnTypeString}, Codec: "ZSTD(1)"},
+					{Name: "tagType", Type: EnumerationColumnType{Values: []string{"'tag' = 1", "'resource' = 2", "'scope' = 3", "'spanfield' = 4"}, Size: 8}, Codec: "ZSTD(1)"},
+					{Name: "dataType", Type: EnumerationColumnType{Values: []string{"'string' = 1", "'bool' = 2", "'float64' = 3"}, Size: 8}, Codec: "ZSTD(1)"},
+					{Name: "isColumn", Type: ColumnTypeBool, Codec: "ZSTD(1)"},
+					{Name: "timestamp", Type: DateTimeColumnType{}, Default: "toDateTime(now())"},
+					{Name: "org_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "project_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+				},
+				Engine: ReplacingMergeTree{MergeTree: MergeTree{
+					OrderBy: "(org_id, project_id, tagKey, tagType, dataType, isColumn)",
+				}},
+			},
+			CreateTableOperation{
+				Database: "signoz_traces",
+				Table:    "distributed_span_attributes_keys_v2",
+				Columns: []Column{
+					{Name: "tagKey", Type: LowCardinalityColumnType{ColumnTypeString}, Codec: "ZSTD(1)"},
+					{Name: "tagType", Type: EnumerationColumnType{Values: []string{"'tag' = 1", "'resource' = 2", "'scope' = 3", "'spanfield' = 4"}, Size: 8}, Codec: "ZSTD(1)"},
+					{Name: "dataType", Type: EnumerationColumnType{Values: []string{"'string' = 1", "'bool' = 2", "'float64' = 3"}, Size: 8}, Codec: "ZSTD(1)"},
+					{Name: "isColumn", Type: ColumnTypeBool, Codec: "ZSTD(1)"},
+					{Name: "timestamp", Type: DateTimeColumnType{}, Default: "toDateTime(now())"},
+					{Name: "org_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "project_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+				},
+				Engine: Distributed{Database: "signoz_traces", Table: "span_attributes_keys_v2", ShardingKey: "cityHash64(org_id, project_id, tagKey)"},
+			},
+			InsertSelectOperation{
+				Database: "signoz_traces",
+				Table: "distributed_tag_attributes_v3",
+				Query: "SELECT unix_milli, tag_key, tag_type, tag_data_type, string_value, number_value, org_id, project_id FROM signoz_traces.distributed_tag_attributes_v2",
+			},
+			InsertSelectOperation{
+				Database: "signoz_traces",
+				Table: "distributed_span_attributes_keys_v2",
+				Query: "SELECT tagKey, tagType, dataType, isColumn, timestamp, org_id, project_id FROM signoz_traces.distributed_span_attributes_keys",
+			},
+		},
+		DownItems: []Operation{
+			DropTableOperation{Database: "signoz_traces", Table: "distributed_span_attributes_keys_v2"},
+			DropTableOperation{Database: "signoz_traces", Table: "span_attributes_keys_v2"},
+			DropTableOperation{Database: "signoz_traces", Table: "distributed_tag_attributes_v3"},
+			DropTableOperation{Database: "signoz_traces", Table: "tag_attributes_v3"},
+		},
 	},
 }
