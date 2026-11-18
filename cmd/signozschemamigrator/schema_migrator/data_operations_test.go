@@ -41,10 +41,11 @@ func TestInsertSelectOperation(t *testing.T) {
 	op := InsertSelectOperation{
 		Database: "signoz_traces",
 		Table:    "distributed_tag_attributes_v3",
+		Columns:  []string{"unix_milli", "tag_key"},
 		Query:    "SELECT unix_milli, tag_key FROM signoz_traces.distributed_tag_attributes_v2",
 	}
 	require.Equal(t,
-		"INSERT INTO signoz_traces.distributed_tag_attributes_v3 SELECT unix_milli, tag_key FROM signoz_traces.distributed_tag_attributes_v2",
+		"INSERT INTO signoz_traces.distributed_tag_attributes_v3 (unix_milli, tag_key) SELECT unix_milli, tag_key FROM signoz_traces.distributed_tag_attributes_v2",
 		op.ToSQL(),
 	)
 	require.False(t, op.IsIdempotent())
