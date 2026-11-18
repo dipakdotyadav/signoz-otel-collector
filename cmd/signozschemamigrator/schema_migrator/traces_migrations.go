@@ -2403,7 +2403,8 @@ var TracesMigrations = []SchemaMigrationRecord{
 			InsertSelectOperation{
 				Database: "signoz_traces",
 				Table: "distributed_span_attributes_keys_v2",
-				Query: "SELECT tagKey, tagType, dataType, isColumn, timestamp, org_id, project_id FROM signoz_traces.distributed_span_attributes_keys",
+				Columns: []string{"tagKey", "tagType", "dataType", "isColumn", "org_id", "project_id"},
+				Query: "SELECT tagKey, tagType, dataType, isColumn, org_id, project_id FROM signoz_traces.distributed_span_attributes_keys",
 			},
 		},
 		DownItems: []Operation{
