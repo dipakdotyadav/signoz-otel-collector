@@ -51,24 +51,36 @@ func applyTenant(attrs interface {
 
 func (p *tenantContextProcessor) processTraces(ctx context.Context, td ptrace.Traces) (ptrace.Traces, error) {
 	orgID, projectID, err := trustedTenant(ctx)
-	if err != nil { return td, fmt.Errorf("%s: %w", p.componentID, err) }
+	if err != nil {
+		return td, fmt.Errorf("%s: %w", p.componentID, err)
+	}
 	rss := td.ResourceSpans()
-	for i := 0; i < rss.Len(); i++ { applyTenant(rss.At(i).Resource().Attributes(), orgID, projectID) }
+	for i := 0; i < rss.Len(); i++ {
+		applyTenant(rss.At(i).Resource().Attributes(), orgID, projectID)
+	}
 	return td, nil
 }
 
 func (p *tenantContextProcessor) processMetrics(ctx context.Context, md pmetric.Metrics) (pmetric.Metrics, error) {
 	orgID, projectID, err := trustedTenant(ctx)
-	if err != nil { return md, fmt.Errorf("%s: %w", p.componentID, err) }
+	if err != nil {
+		return md, fmt.Errorf("%s: %w", p.componentID, err)
+	}
 	rms := md.ResourceMetrics()
-	for i := 0; i < rms.Len(); i++ { applyTenant(rms.At(i).Resource().Attributes(), orgID, projectID) }
+	for i := 0; i < rms.Len(); i++ {
+		applyTenant(rms.At(i).Resource().Attributes(), orgID, projectID)
+	}
 	return md, nil
 }
 
 func (p *tenantContextProcessor) processLogs(ctx context.Context, ld plog.Logs) (plog.Logs, error) {
 	orgID, projectID, err := trustedTenant(ctx)
-	if err != nil { return ld, fmt.Errorf("%s: %w", p.componentID, err) }
+	if err != nil {
+		return ld, fmt.Errorf("%s: %w", p.componentID, err)
+	}
 	rls := ld.ResourceLogs()
-	for i := 0; i < rls.Len(); i++ { applyTenant(rls.At(i).Resource().Attributes(), orgID, projectID) }
+	for i := 0; i < rls.Len(); i++ {
+		applyTenant(rls.At(i).Resource().Attributes(), orgID, projectID)
+	}
 	return ld, nil
 }
