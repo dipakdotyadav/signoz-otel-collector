@@ -385,6 +385,8 @@ func Test_newStructuredSpanV3(t *testing.T) {
 				resource: func() pcommon.Resource {
 					resource := pcommon.NewResource()
 					resource.Attributes().PutStr("service.name", "test_service")
+					resource.Attributes().PutStr("signoz.org.id", "org-123")
+					resource.Attributes().PutStr("signoz.project.id", "project-456")
 					resource.Attributes().PutInt("num", 10)
 					v := resource.Attributes().PutEmptyMap("mymap")
 					v.PutStr("map_key", "map_val")
@@ -398,6 +400,8 @@ func Test_newStructuredSpanV3(t *testing.T) {
 				TsBucketStart:     0,
 				FingerPrint:       "test_fingerprint",
 				StartTimeUnixNano: uint64(pcommon.NewTimestampFromTime(time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)).AsTime().UnixNano()),
+				OrgID:             "org-123",
+				ProjectID:         "project-456",
 				DurationNano:      0,
 				Name:              "test_span",
 				Kind:              2,
@@ -419,12 +423,16 @@ func Test_newStructuredSpanV3(t *testing.T) {
 					"mymap.map_double": "20.5",
 					"mymap.map_key":    "map_val",
 					"service.name":     "test_service",
+					"signoz.org.id":    "org-123",
+					"signoz.project.id": "project-456",
 					"num":              "10",
 				},
 				BillableResourcesString: map[string]string{
 					"mymap.map_double": "20.5",
 					"mymap.map_key":    "map_val",
 					"service.name":     "test_service",
+					"signoz.org.id":    "org-123",
+					"signoz.project.id": "project-456",
 					"num":              "10",
 				},
 
@@ -578,6 +586,8 @@ func Test_newStructuredSpanV3(t *testing.T) {
 					"mymap.map_double": "20.5",
 					"mymap.map_key":    "map_val",
 					"service.name":     "test_service",
+					"signoz.org.id":    "org-123",
+					"signoz.project.id": "project-456",
 					"num":              "10",
 				},
 
