@@ -1,6 +1,7 @@
 package components
 
 import (
+	"github.com/SigNoz/signoz-otel-collector/extension/signozingestionkeyauthextension"
 	"github.com/SigNoz/signoz-otel-collector/connectors/signozmeterconnector"
 	"github.com/SigNoz/signoz-otel-collector/exporter/clickhouselogsexporter"
 	"github.com/SigNoz/signoz-otel-collector/exporter/clickhousetracesexporter"
@@ -481,6 +482,7 @@ func CoreComponents(
 		zpagesextension.NewFactory(),
 		azureauthextension.NewFactory(),
 		googlecloudlogentryencodingextension.NewFactory(),
+		signozingestionkeyauthextension.NewFactory(),
 	)
 	extensionsMap, err := otelcol.MakeFactoryMap(extensions...)
 	if err != nil {
