@@ -19,6 +19,8 @@ var protectedLabels = map[string]struct{}{
 	"__name__":               {},
 	"__temporality__":        {},
 	"deployment.environment": {},
+	"signoz.org.id":          {},
+	"signoz.project.id":      {},
 }
 
 const rulesPollTimeout = 30 * time.Second
@@ -37,11 +39,14 @@ type reductionRule struct {
 }
 
 func (r *reductionRule) drop(key string) bool {
+	// Tenant identity must survive every reduction mode. Keep this guard here,
+	// not only in rule loading, so constructed/test rules and future rule
+	// sources cannot accidentally erase the isolation boundary.
+	if _, protected := protectedLabels[key]; protected {
+		return false
+	}
 	_, listed := r.keys[key]
 	if r.keep {
-		if _, protected := protectedLabels[key]; protected {
-			return false
-		}
 		return !listed
 	}
 	return listed
