@@ -33,8 +33,8 @@ const (
 	defaultDatasource        string = "tcp://127.0.0.1:9000/?database=signoz_traces"
 	defaultTraceDatabase     string = "signoz_traces"
 	defaultErrorTable        string = "distributed_signoz_error_index_v2"
-	defaultAttributeTableV2  string = "distributed_tag_attributes_v2"
-	defaultAttributeKeyTable string = "distributed_span_attributes_keys"
+	defaultAttributeTableV2  string = "distributed_tag_attributes_v3"
+	defaultAttributeKeyTable string = "distributed_span_attributes_keys_v2"
 	defaultIndexTableV3      string = "distributed_signoz_index_v3"
 	defaultResourceTableV3   string = "distributed_traces_v3_resource"
 	insertTraceSQLTemplateV2        = `INSERT INTO %s.%s (
