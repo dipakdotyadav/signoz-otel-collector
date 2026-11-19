@@ -476,6 +476,16 @@ func (e *clickhouseLogsExporter) pushToClickhouse(ctx context.Context, ld plog.L
 	var resourceKeysStmt driver.Batch
 	var tenantAttributeKeysStmt driver.Batch
 	var tenantResourceKeysStmt driver.Batch
+	hasTenantScope := false
+	for i := 0; i < ld.ResourceLogs().Len(); i++ {
+		attrs := ld.ResourceLogs().At(i).Resource().Attributes()
+		org, orgOK := attrs.Get("signoz.org.id")
+		project, projectOK := attrs.Get("signoz.project.id")
+		if orgOK && projectOK && org.Str() != "" && project.Str() != "" {
+			hasTenantScope = true
+			break
+		}
+	}
 
 	var shouldSkipKeys map[string]shouldSkipKey
 	if e.shouldSkipKeyValue.Load() != nil {
@@ -507,17 +517,19 @@ func (e *clickhouseLogsExporter) pushToClickhouse(ctx context.Context, ld plog.L
 	}
 	defer func() { _ = resourceKeysStmt.Close() }()
 
-	tenantAttributeKeysStmt, err = e.db.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s.%s", databaseName, distributedLogsAttributeKeysV2), driver.WithReleaseConnection())
-	if err != nil {
-		return fmt.Errorf("PrepareTenantAttributeKeysBatch:%w", err)
-	}
-	defer func() { _ = tenantAttributeKeysStmt.Close() }()
+	if hasTenantScope {
+		tenantAttributeKeysStmt, err = e.db.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s.%s", databaseName, distributedLogsAttributeKeysV2), driver.WithReleaseConnection())
+		if err != nil {
+			return fmt.Errorf("PrepareTenantAttributeKeysBatch:%w", err)
+		}
+		defer func() { _ = tenantAttributeKeysStmt.Close() }()
 
-	tenantResourceKeysStmt, err = e.db.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s.%s", databaseName, distributedLogsResourceKeysV2), driver.WithReleaseConnection())
-	if err != nil {
-		return fmt.Errorf("PrepareTenantResourceKeysBatch:%w", err)
+		tenantResourceKeysStmt, err = e.db.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s.%s", databaseName, distributedLogsResourceKeysV2), driver.WithReleaseConnection())
+		if err != nil {
+			return fmt.Errorf("PrepareTenantResourceKeysBatch:%w", err)
+		}
+		defer func() { _ = tenantResourceKeysStmt.Close() }()
 	}
-	defer func() { _ = tenantResourceKeysStmt.Close() }()
 
 	insertLogsStmtV2, err = e.db.PrepareBatch(ctx, e.insertLogsSQLV2, driver.WithReleaseConnection())
 	if err != nil {
@@ -764,23 +776,35 @@ producerIteration:
 		return fmt.Errorf("error appending resources to batch: %w", err)
 	}
 
+	type pendingBatch struct {
+		batch driver.Batch
+		name  string
+	}
+	batches := []pendingBatch{
+		{insertLogsStmtV2, distributedLogsTableV2},
+		{insertResourcesStmtV2, distributedLogsResourceV2},
+		{attributeKeysStmt, distributedLogsAttributeKeys},
+		{resourceKeysStmt, distributedLogsResourceKeys},
+		{tagStatementV2, distributedTagAttributesV2},
+	}
+	if hasTenantScope {
+		batches = append(batches,
+			pendingBatch{tenantAttributeKeysStmt, distributedLogsAttributeKeysV2},
+			pendingBatch{tenantResourceKeysStmt, distributedLogsResourceKeysV2},
+		)
+	}
 	var wg sync.WaitGroup
-	chErr := make(chan error, chLen+2)
-	chDuration := make(chan statementSendDuration, chLen+2)
-
-	wg.Add(chLen + 2)
-	go send(insertLogsStmtV2, distributedLogsTableV2, chDuration, chErr, &wg)
-	go send(insertResourcesStmtV2, distributedLogsResourceV2, chDuration, chErr, &wg)
-	go send(attributeKeysStmt, distributedLogsAttributeKeys, chDuration, chErr, &wg)
-	go send(resourceKeysStmt, distributedLogsResourceKeys, chDuration, chErr, &wg)
-	go send(tenantAttributeKeysStmt, distributedLogsAttributeKeysV2, chDuration, chErr, &wg)
-	go send(tenantResourceKeysStmt, distributedLogsResourceKeysV2, chDuration, chErr, &wg)
-	go send(tagStatementV2, distributedTagAttributesV2, chDuration, chErr, &wg)
+	chErr := make(chan error, len(batches))
+	chDuration := make(chan statementSendDuration, len(batches))
+	wg.Add(len(batches))
+	for _, batch := range batches {
+		go send(batch.batch, batch.name, chDuration, chErr, &wg)
+	}
 	wg.Wait()
 	close(chErr)
 
 	// store the duration for send the data
-	for i := 0; i < chLen+2; i++ {
+	for i := 0; i < len(batches); i++ {
 		sendDuration := <-chDuration
 		e.durationHistogram.Record(
 			ctx,
@@ -793,7 +817,7 @@ producerIteration:
 	}
 
 	// check the errors
-	for i := 0; i < chLen+2; i++ {
+	for i := 0; i < len(batches); i++ {
 		if r := <-chErr; r != nil {
 			return fmt.Errorf("StatementSend:%w", r)
 		}
