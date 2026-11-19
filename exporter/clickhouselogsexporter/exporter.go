@@ -467,7 +467,6 @@ func tsBucket(ts int64, bucketSize int64) int64 {
 
 func (e *clickhouseLogsExporter) pushToClickhouse(ctx context.Context, ld plog.Logs) error {
 	start := time.Now()
-	chLen := 5
 
 	var insertLogsStmtV2 driver.Batch
 	var insertResourcesStmtV2 driver.Batch
