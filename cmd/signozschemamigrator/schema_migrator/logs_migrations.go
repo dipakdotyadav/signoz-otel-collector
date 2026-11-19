@@ -621,5 +621,90 @@ ORDER BY name ASC`,
 			},
 		},
 	},
-	// Next migration id will be 2005
+	{
+		// Tenant-scoped metadata key tables. Keep the legacy key tables intact
+		// while readers and writers are migrated to the tenant-aware schema.
+		MigrationID: 2005,
+		UpItems: []Operation{
+			CreateTableOperation{
+				Database: "signoz_logs",
+				Table:    "logs_attribute_keys_v2",
+				Columns: []Column{
+					{Name: "org_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "project_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "name", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "datatype", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "timestamp", Type: DateTimeColumnType{}, Default: "toDateTime(now())"},
+				},
+				Engine: ReplacingMergeTree{
+					MergeTree: MergeTree{
+						OrderBy: "(org_id, project_id, name, datatype)",
+						TTL:     "timestamp + INTERVAL 15 DAY",
+						Settings: TableSettings{
+							{Name: "index_granularity", Value: "8192"},
+						},
+					},
+				},
+			},
+			CreateTableOperation{
+				Database: "signoz_logs",
+				Table:    "distributed_logs_attribute_keys_v2",
+				Columns: []Column{
+					{Name: "org_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "project_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "name", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "datatype", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "timestamp", Type: DateTimeColumnType{}, Default: "toDateTime(now())"},
+				},
+				Engine: Distributed{
+					Database:    "signoz_logs",
+					Table:       "logs_attribute_keys_v2",
+					ShardingKey: "cityHash64(org_id, project_id)",
+				},
+			},
+			CreateTableOperation{
+				Database: "signoz_logs",
+				Table:    "logs_resource_keys_v2",
+				Columns: []Column{
+					{Name: "org_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "project_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "name", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "datatype", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "timestamp", Type: DateTimeColumnType{}, Default: "toDateTime(now())"},
+				},
+				Engine: ReplacingMergeTree{
+					MergeTree: MergeTree{
+						OrderBy: "(org_id, project_id, name, datatype)",
+						TTL:     "timestamp + INTERVAL 15 DAY",
+						Settings: TableSettings{
+							{Name: "index_granularity", Value: "8192"},
+						},
+					},
+				},
+			},
+			CreateTableOperation{
+				Database: "signoz_logs",
+				Table:    "distributed_logs_resource_keys_v2",
+				Columns: []Column{
+					{Name: "org_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "project_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "name", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "datatype", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "timestamp", Type: DateTimeColumnType{}, Default: "toDateTime(now())"},
+				},
+				Engine: Distributed{
+					Database:    "signoz_logs",
+					Table:       "logs_resource_keys_v2",
+					ShardingKey: "cityHash64(org_id, project_id)",
+				},
+			},
+		},
+		DownItems: []Operation{
+			DropTableOperation{Database: "signoz_logs", Table: "distributed_logs_resource_keys_v2"},
+			DropTableOperation{Database: "signoz_logs", Table: "logs_resource_keys_v2"},
+			DropTableOperation{Database: "signoz_logs", Table: "distributed_logs_attribute_keys_v2"},
+			DropTableOperation{Database: "signoz_logs", Table: "logs_attribute_keys_v2"},
+		},
+	},
+	// Next migration id will be 2006
 }
