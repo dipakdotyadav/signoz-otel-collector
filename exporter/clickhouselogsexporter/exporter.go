@@ -56,8 +56,10 @@ const (
 	distributedLogsTableV2           = "distributed_logs_v2"
 	logsTableV2                      = "logs_v2"
 	distributedLogsResourceV2        = "distributed_logs_v2_resource"
-	distributedLogsAttributeKeys     = "distributed_logs_attribute_keys"
-	distributedLogsResourceKeys      = "distributed_logs_resource_keys"
+	distributedLogsAttributeKeys       = "distributed_logs_attribute_keys"
+	distributedLogsResourceKeys        = "distributed_logs_resource_keys"
+	distributedLogsAttributeKeysV2     = "distributed_logs_attribute_keys_v2"
+	distributedLogsResourceKeysV2      = "distributed_logs_resource_keys_v2"
 	distributedColumnEvolutionTable  = constants.SignozMetadataDB + ".distributed_column_evolution_metadata"
 	distributedLogsResourceV2Seconds = 1800
 	bodyNonMapKey                    = "message"
@@ -160,6 +162,8 @@ type Record struct {
 	scopeMap    attributeMap
 	attrsMap    attributeMap
 	logFields   attributeMap
+	orgID       string
+	projectID   string
 	recordSize  int64
 }
 
@@ -470,6 +474,8 @@ func (e *clickhouseLogsExporter) pushToClickhouse(ctx context.Context, ld plog.L
 	var tagStatementV2 driver.Batch
 	var attributeKeysStmt driver.Batch
 	var resourceKeysStmt driver.Batch
+	var tenantAttributeKeysStmt driver.Batch
+	var tenantResourceKeysStmt driver.Batch
 
 	var shouldSkipKeys map[string]shouldSkipKey
 	if e.shouldSkipKeyValue.Load() != nil {
@@ -500,6 +506,18 @@ func (e *clickhouseLogsExporter) pushToClickhouse(ctx context.Context, ld plog.L
 		return fmt.Errorf("PrepareResourceKeysBatch:%w", err)
 	}
 	defer func() { _ = resourceKeysStmt.Close() }()
+
+	tenantAttributeKeysStmt, err = e.db.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s.%s", databaseName, distributedLogsAttributeKeysV2), driver.WithReleaseConnection())
+	if err != nil {
+		return fmt.Errorf("PrepareTenantAttributeKeysBatch:%w", err)
+	}
+	defer func() { _ = tenantAttributeKeysStmt.Close() }()
+
+	tenantResourceKeysStmt, err = e.db.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s.%s", databaseName, distributedLogsResourceKeysV2), driver.WithReleaseConnection())
+	if err != nil {
+		return fmt.Errorf("PrepareTenantResourceKeysBatch:%w", err)
+	}
+	defer func() { _ = tenantResourceKeysStmt.Close() }()
 
 	insertLogsStmtV2, err = e.db.PrepareBatch(ctx, e.insertLogsSQLV2, driver.WithReleaseConnection())
 	if err != nil {
@@ -545,17 +563,17 @@ func (e *clickhouseLogsExporter) pushToClickhouse(ctx context.Context, ld plog.L
 					return nil
 				}
 				// tags for resource/scope/attrs
-				if err := e.addAttrsToTagStatement(tagStatementV2, attributeKeysStmt, resourceKeysStmt, utils.TagTypeResource, rec.resourceMap, shouldSkipKeys, deduper); err != nil {
+				if err := e.addAttrsToTagStatement(tagStatementV2, attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, rec.orgID, rec.projectID, utils.TagTypeResource, rec.resourceMap, shouldSkipKeys, deduper); err != nil {
 					return err
 				}
-				if err := e.addAttrsToTagStatement(tagStatementV2, attributeKeysStmt, resourceKeysStmt, utils.TagTypeScope, rec.scopeMap, shouldSkipKeys, deduper); err != nil {
+				if err := e.addAttrsToTagStatement(tagStatementV2, attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, rec.orgID, rec.projectID, utils.TagTypeScope, rec.scopeMap, shouldSkipKeys, deduper); err != nil {
 					return err
 				}
-				if err := e.addAttrsToTagStatement(tagStatementV2, attributeKeysStmt, resourceKeysStmt, utils.TagTypeAttribute, rec.attrsMap, shouldSkipKeys, deduper); err != nil {
+				if err := e.addAttrsToTagStatement(tagStatementV2, attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, rec.orgID, rec.projectID, utils.TagTypeAttribute, rec.attrsMap, shouldSkipKeys, deduper); err != nil {
 					return err
 				}
 				// log fields
-				_ = e.addAttrsToTagStatement(tagStatementV2, attributeKeysStmt, resourceKeysStmt, utils.TagTypeLogField, rec.logFields, shouldSkipKeys, deduper)
+				_ = e.addAttrsToTagStatement(tagStatementV2, attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, rec.orgID, rec.projectID, utils.TagTypeLogField, rec.logFields, shouldSkipKeys, deduper)
 
 				// append main log row
 				args := []any{
@@ -670,7 +688,11 @@ producerIteration:
 
 					originalBody, hasOriginalBody := record.Attributes().Get(constants.OriginalBodyAttributeKey)
 					body, bodyJSON, promoted := e.processBody(groupCtx, record.Body(), originalBody, hasOriginalBody)
+					orgID, _ := res.Attributes().Get("signoz.org.id")
+					projectID, _ := res.Attributes().Get("signoz.project.id")
 					recordStream <- &Record{
+						orgID:            orgID.Str(),
+						projectID:        projectID.Str(),
 						tsBucketStart:    uint64(lBucketStart),
 						resourceFP:       fp,
 						ts:               ts,
@@ -743,20 +765,22 @@ producerIteration:
 	}
 
 	var wg sync.WaitGroup
-	chErr := make(chan error, chLen)
-	chDuration := make(chan statementSendDuration, chLen)
+	chErr := make(chan error, chLen+2)
+	chDuration := make(chan statementSendDuration, chLen+2)
 
-	wg.Add(chLen)
+	wg.Add(chLen + 2)
 	go send(insertLogsStmtV2, distributedLogsTableV2, chDuration, chErr, &wg)
 	go send(insertResourcesStmtV2, distributedLogsResourceV2, chDuration, chErr, &wg)
 	go send(attributeKeysStmt, distributedLogsAttributeKeys, chDuration, chErr, &wg)
 	go send(resourceKeysStmt, distributedLogsResourceKeys, chDuration, chErr, &wg)
+	go send(tenantAttributeKeysStmt, distributedLogsAttributeKeysV2, chDuration, chErr, &wg)
+	go send(tenantResourceKeysStmt, distributedLogsResourceKeysV2, chDuration, chErr, &wg)
 	go send(tagStatementV2, distributedTagAttributesV2, chDuration, chErr, &wg)
 	wg.Wait()
 	close(chErr)
 
 	// store the duration for send the data
-	for i := 0; i < chLen; i++ {
+	for i := 0; i < chLen+2; i++ {
 		sendDuration := <-chDuration
 		e.durationHistogram.Record(
 			ctx,
@@ -769,7 +793,7 @@ producerIteration:
 	}
 
 	// check the errors
-	for i := 0; i < chLen; i++ {
+	for i := 0; i < chLen+2; i++ {
 		if r := <-chErr; r != nil {
 			return fmt.Errorf("StatementSend:%w", r)
 		}
@@ -849,6 +873,10 @@ func getStringifiedBody(body pcommon.Value) string {
 func (e *clickhouseLogsExporter) addAttrsToAttributeKeysStatement(
 	attributeKeysStmt driver.Batch,
 	resourceKeysStmt driver.Batch,
+	tenantAttributeKeysStmt driver.Batch,
+	tenantResourceKeysStmt driver.Batch,
+	orgID string,
+	projectID string,
 	key string,
 	tagType utils.TagType,
 	datatype utils.FieldDataType,
@@ -857,10 +885,11 @@ func (e *clickhouseLogsExporter) addAttrsToAttributeKeysStatement(
 	if keycheck.IsRandomKey(key) {
 		return
 	}
-	if deduper.SeenKeyID(tagdedup.KeyID(key, tagType, datatype, false)) {
+	tenantKey := orgID + "\x1f" + projectID + "\x1f" + key
+	if deduper.SeenKeyID(tagdedup.KeyID(tenantKey, tagType, datatype, false)) {
 		return
 	}
-	cacheKey := utils.MakeKeyForAttributeKeys(key, tagType, datatype)
+	cacheKey := orgID + "\x1f" + projectID + "\x1f" + utils.MakeKeyForAttributeKeys(key, tagType, datatype)
 	// skip if the key is already present
 	if item := e.keysCache.Get(cacheKey); item != nil {
 		e.logger.Debug("key already present in cache, skipping", zap.String("key", key))
@@ -869,17 +898,17 @@ func (e *clickhouseLogsExporter) addAttrsToAttributeKeysStatement(
 
 	switch tagType {
 	case utils.TagTypeResource:
-		// TODO: handle error
-		_ = resourceKeysStmt.Append(
-			key,
-			datatype,
-		)
+		if orgID != "" && projectID != "" {
+			_ = tenantResourceKeysStmt.Append(orgID, projectID, key, datatype)
+		} else {
+			_ = resourceKeysStmt.Append(key, datatype)
+		}
 	case utils.TagTypeAttribute:
-		// TODO: handle error
-		_ = attributeKeysStmt.Append(
-			key,
-			datatype,
-		)
+		if orgID != "" && projectID != "" {
+			_ = tenantAttributeKeysStmt.Append(orgID, projectID, key, datatype)
+		} else {
+			_ = attributeKeysStmt.Append(key, datatype)
+		}
 	}
 	e.keysCache.Set(cacheKey, struct{}{}, ttlcache.DefaultTTL)
 }
@@ -888,6 +917,10 @@ func (e *clickhouseLogsExporter) addAttrsToTagStatement(
 	tagStatementV2 driver.Batch,
 	attributeKeysStmt driver.Batch,
 	resourceKeysStmt driver.Batch,
+	tenantAttributeKeysStmt driver.Batch,
+	tenantResourceKeysStmt driver.Batch,
+	orgID string,
+	projectID string,
 	tagType utils.TagType,
 	attrs attributeMap,
 	shouldSkipKeys map[string]shouldSkipKey,
@@ -898,10 +931,10 @@ func (e *clickhouseLogsExporter) addAttrsToTagStatement(
 		if keycheck.IsRandomKey(attrKey) {
 			continue
 		}
-		if deduper.SeenValueID(tagdedup.ValueID(attrKey, tagType, utils.FieldDataTypeString, attrVal, 0)) {
+		if deduper.SeenValueID(tagdedup.ValueID(orgID+"\x1f"+projectID+"\x1f"+attrKey, tagType, utils.FieldDataTypeString, attrVal, 0)) {
 			continue
 		}
-		e.addAttrsToAttributeKeysStatement(attributeKeysStmt, resourceKeysStmt, attrKey, tagType, utils.FieldDataTypeString, deduper)
+		e.addAttrsToAttributeKeysStatement(attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, orgID, projectID, attrKey, tagType, utils.FieldDataTypeString, deduper)
 		if len(attrVal) > common.MaxAttributeValueLength {
 			e.logger.Debug("attribute value length exceeds the limit", zap.String("key", attrKey))
 			continue
@@ -929,10 +962,10 @@ func (e *clickhouseLogsExporter) addAttrsToTagStatement(
 		if keycheck.IsRandomKey(numKey) {
 			continue
 		}
-		if deduper.SeenValueID(tagdedup.ValueID(numKey, tagType, utils.FieldDataTypeFloat64, "", numVal)) {
+		if deduper.SeenValueID(tagdedup.ValueID(orgID+"\x1f"+projectID+"\x1f"+numKey, tagType, utils.FieldDataTypeFloat64, "", numVal)) {
 			continue
 		}
-		e.addAttrsToAttributeKeysStatement(attributeKeysStmt, resourceKeysStmt, numKey, tagType, utils.FieldDataTypeFloat64, deduper)
+		e.addAttrsToAttributeKeysStatement(attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, orgID, projectID, numKey, tagType, utils.FieldDataTypeFloat64, deduper)
 		key := utils.MakeKeyForAttributeKeys(numKey, tagType, utils.FieldDataTypeFloat64)
 		if _, ok := shouldSkipKeys[key]; ok {
 			e.logger.Debug("key has been skipped", zap.String("key", key))
@@ -954,10 +987,10 @@ func (e *clickhouseLogsExporter) addAttrsToTagStatement(
 		if keycheck.IsRandomKey(boolKey) {
 			continue
 		}
-		if deduper.SeenValueID(tagdedup.ValueID(boolKey, tagType, utils.FieldDataTypeBool, "", 0)) {
+		if deduper.SeenValueID(tagdedup.ValueID(orgID+"\x1f"+projectID+"\x1f"+boolKey, tagType, utils.FieldDataTypeBool, "", 0)) {
 			continue
 		}
-		e.addAttrsToAttributeKeysStatement(attributeKeysStmt, resourceKeysStmt, boolKey, tagType, utils.FieldDataTypeBool, deduper)
+		e.addAttrsToAttributeKeysStatement(attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, orgID, projectID, boolKey, tagType, utils.FieldDataTypeBool, deduper)
 
 		key := utils.MakeKeyForAttributeKeys(boolKey, tagType, utils.FieldDataTypeBool)
 		if _, ok := shouldSkipKeys[key]; ok {
