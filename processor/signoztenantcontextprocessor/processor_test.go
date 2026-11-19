@@ -93,10 +93,32 @@ func TestProcessMetricsAndLogsApplyTrustedTenant(t *testing.T) {
 
 	logs := plog.NewLogs()
 	logResource := logs.ResourceLogs().AppendEmpty().Resource()
-	logResource.Attributes().PutStr(orgAttribute, "forged")
+	logAttrs := logResource.Attributes()
+	logAttrs.PutStr(orgAttribute, "forged-org")
+	logAttrs.PutStr(projectAttribute, "forged-project")
+	logAttrs.PutStr("org_id", "forged-org-alias")
+	logAttrs.PutStr("project_id", "forged-project-alias")
+	logAttrs.PutStr("organization_id", "forged-organization-alias")
+	logAttrs.PutStr("signoz-ingestion-key", "client-secret")
+	logAttrs.PutStr("SIGNOZ-API-KEY", "client-api-key")
+
 	gotLogs, err := processor.processLogs(ctx, logs)
 	require.NoError(t, err)
-	logOrg, ok := gotLogs.ResourceLogs().At(0).Resource().Attributes().Get(orgAttribute)
+	logAttrs = gotLogs.ResourceLogs().At(0).Resource().Attributes()
+	logOrg, ok := logAttrs.Get(orgAttribute)
 	require.True(t, ok)
 	require.Equal(t, "org-trusted", logOrg.Str())
+	logProject, ok := logAttrs.Get(projectAttribute)
+	require.True(t, ok)
+	require.Equal(t, "project-trusted", logProject.Str())
+	for _, untrustedKey := range []string{
+		"org_id",
+		"project_id",
+		"organization_id",
+		"signoz-ingestion-key",
+		"SIGNOZ-API-KEY",
+	} {
+		_, ok = logAttrs.Get(untrustedKey)
+		require.False(t, ok, "untrusted tenant alias %q must be removed from logs", untrustedKey)
+	}
 }
