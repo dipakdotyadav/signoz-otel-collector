@@ -878,6 +878,8 @@ func TestExporterPushLogsDataWritesTenantScopedTagMetadata(t *testing.T) {
 	resourceAttrs := logs.ResourceLogs().At(0).Resource().Attributes()
 	resourceAttrs.PutStr("signoz.org.id", "11111111-1111-4111-8111-111111111111")
 	resourceAttrs.PutStr("signoz.project.id", "22222222-2222-4222-8222-222222222222")
+	resourceAttrs.PutStr("tenant.resource", "resource-value")
+	logs.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0).Attributes().PutStr("tenant.attribute", "attribute-value")
 
 	require.NoError(t, exporter.pushLogsData(context.Background(), logs))
 	require.NoError(t, exporter.Shutdown(context.Background()))
