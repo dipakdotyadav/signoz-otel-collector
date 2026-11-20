@@ -303,7 +303,9 @@ func (w *jsonMetadataWriter) skipUVT(key string) bool {
 }
 
 func (w *jsonMetadataWriter) Process(ctx context.Context, ld plog.Logs) error {
-	bodyTypes := &typesAccumulator{}
+	legacyBodyTypes := &typesAccumulator{}
+	tenantBodyTypes := make(map[string]*typesAccumulator)
+	tenantScopes := make(map[string][2]string)
 
 	// Keep legacy organization-level ingestion on V2. Only records carrying
 	// both trusted tenant attributes (added by signoztenantcontext) are written
@@ -332,7 +334,14 @@ func (w *jsonMetadataWriter) Process(ctx context.Context, ld plog.Logs) error {
 			return err
 		}
 		activeVA := legacyVA
+		activeTypes := legacyBodyTypes
 		if scoped {
+			scopeKey := orgID + "/" + projectID
+			if tenantBodyTypes[scopeKey] == nil {
+				tenantBodyTypes[scopeKey] = &typesAccumulator{}
+				tenantScopes[scopeKey] = [2]string{orgID, projectID}
+			}
+			activeTypes = tenantBodyTypes[scopeKey]
 			if tenantVA == nil {
 				tenantStmt, err := w.conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s (org_id, project_id, unix_milli, tag_key, tag_type, tag_data_type, string_value, number_value)", distributedTagAttrsV3Table), driver.WithReleaseConnection())
 				if err != nil {
@@ -361,7 +370,7 @@ func (w *jsonMetadataWriter) Process(ctx context.Context, ld plog.Logs) error {
 					w.logger.Error("body expected to be map", zap.String("body.type", val.Type().String()))
 					continue
 				}
-				if numOfKeys, err := w.walkNode(ctx, "", val, 0, utils.TagTypeBodyField, ts.AsTime().UnixMilli(), bodyTypes, activeVA); err != nil {
+				if numOfKeys, err := w.walkNode(ctx, "", val, 0, utils.TagTypeBodyField, ts.AsTime().UnixMilli(), activeTypes, activeVA); err != nil {
 					w.logger.Error("json walk failed", zap.String("source", string(utils.TagTypeBodyField)), zap.Error(err))
 				} else {
 					w.logsProcessed.Add(ctx, 1)
@@ -372,15 +381,32 @@ func (w *jsonMetadataWriter) Process(ctx context.Context, ld plog.Logs) error {
 	}
 
 	g, gCtx := errgroup.WithContext(ctx)
-	g.Go(func() error { return w.flushTypeSet(gCtx, bodyTypes) })
-	g.Go(legacyVA.flush)
+	if hasRecordedTypes(legacyBodyTypes) {
+		g.Go(func() error { return w.flushTypeSet(gCtx, legacyBodyTypes) })
+	}
+	for scopeKey, scopedTypes := range tenantBodyTypes {
+		scope := tenantScopes[scopeKey]
+		g.Go(func() error { return w.flushTenantTypeSet(gCtx, scopedTypes, scope[0], scope[1]) })
+	}
+	if legacyVA != nil {
+		g.Go(legacyVA.flush)
+	}
 	if tenantVA != nil {
 		g.Go(tenantVA.flush)
 	}
 	return g.Wait()
 }
 
-// flushTypeSet writes all path-type records for the body source to distributed_json_path_types.
+func hasRecordedTypes(ta *typesAccumulator) bool {
+	hasTypes := false
+	ta.types.Range(func(_, _ any) bool {
+		hasTypes = true
+		return false
+	})
+	return hasTypes
+}
+
+// flushTypeSet writes legacy path types to the shared field-key table.
 func (w *jsonMetadataWriter) flushTypeSet(ctx context.Context, ta *typesAccumulator) error {
 	sql := fmt.Sprintf("INSERT INTO %s (signal, field_context, %s, %s, last_seen) VALUES (?, ?, ?, ?, ?)", distributedFieldKeysTable, constants.FieldKeysTableNameColumn, constants.FieldKeysTableDataTypeColumn)
 	stmt, err := w.conn.PrepareBatch(ctx, sql, driver.WithReleaseConnection())
@@ -391,6 +417,35 @@ func (w *jsonMetadataWriter) flushTypeSet(ctx context.Context, ta *typesAccumula
 
 	if err := appendTypeSet(ta, pipeline.SignalLogs.String(), string(utils.TagTypeBodyField), stmt, time.Now().UnixNano()); err != nil {
 		return fmt.Errorf("failed to append to path types batch: %w", err)
+	}
+	return stmt.Send()
+}
+
+// flushTenantTypeSet writes project-authenticated body paths with their
+// authenticated organization/project identity. It never writes scoped paths
+// to the legacy shared field-key table.
+func (w *jsonMetadataWriter) flushTenantTypeSet(ctx context.Context, ta *typesAccumulator, orgID, projectID string) error {
+	sql := "INSERT INTO signoz_metadata.distributed_tenant_field_keys_v2 (org_id, project_id, signal, field_context, field_name, field_data_type, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)"
+	stmt, err := w.conn.PrepareBatch(ctx, sql, driver.WithReleaseConnection())
+	if err != nil {
+		return fmt.Errorf("failed to prepare tenant path types batch: %w", err)
+	}
+	defer func() { _ = stmt.Close() }()
+
+	var appendErr error
+	ta.types.Range(func(key, value any) bool {
+		path := key.(string)
+		cs := value.(*typesConcurrentSet)
+		for _, typeStr := range cs.Keys() {
+			if err := stmt.Append(orgID, projectID, pipeline.SignalLogs.String(), string(utils.TagTypeBodyField), path, typeStr, time.Now().UnixNano()); err != nil {
+				appendErr = err
+				return false
+			}
+		}
+		return true
+	})
+	if appendErr != nil {
+		return fmt.Errorf("failed to append tenant path types: %w", appendErr)
 	}
 	return stmt.Send()
 }
