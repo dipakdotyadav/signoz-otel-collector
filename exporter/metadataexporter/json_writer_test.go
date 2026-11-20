@@ -82,6 +82,26 @@ func TestTenantScopeFromResource(t *testing.T) {
 	})
 }
 
+func TestTenantCardinalityKeyIsProjectScoped(t *testing.T) {
+	var checkedKey string
+	va := newTestValueAccumulator(t)
+	va.tenantAware = true
+	va.orgID = "11111111-1111-4111-8111-111111111111"
+	va.projectID = "22222222-2222-4222-8222-222222222222"
+	va.shouldSkipFromDB = func(key string) bool {
+		checkedKey = key
+		return false
+	}
+	va.shouldSkipUVT = func(string) bool { return false }
+	va.addToUVT = func(string, any) {}
+
+	require.False(t, va.shouldSkipOrTrack("http.method", utils.TagTypeBodyField, "GET"))
+	require.Equal(t,
+		va.orgID+"/"+va.projectID+"/"+utils.MakeKeyForSkipKeys(utils.TagTypeBodyField, "http.method"),
+		checkedKey,
+	)
+}
+
 func TestWalk_EndToEndTypes(t *testing.T) {
 	input := map[string]any{
 		"_p": "F",
