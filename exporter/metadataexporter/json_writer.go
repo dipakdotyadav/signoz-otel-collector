@@ -59,6 +59,11 @@ type valueAccumulator struct {
 // records the value in UVT. Returns true when the record should be skipped.
 func (va *valueAccumulator) shouldSkipOrTrack(path string, context utils.TagType, value any) bool {
 	key := utils.MakeKeyForSkipKeys(context, path)
+	if va.tenantAware {
+		// Keep both persisted and in-memory cardinality accounting inside the
+		// authenticated project boundary.
+		key = va.orgID + "/" + va.projectID + "/" + key
+	}
 	if va.shouldSkipFromDB(key) {
 		return true
 	}
@@ -252,37 +257,62 @@ func (w *jsonMetadataWriter) skipKeysTicker(ctx context.Context) {
 //
 // TODO(Piyush): We've used MaxStringDistinctValues for all the types, look into it in future
 func (w *jsonMetadataWriter) fetchSkipKeys(ctx context.Context) {
-	query := fmt.Sprintf(`
+	legacyQuery := fmt.Sprintf(`
 		SELECT tag_key, tag_type
-		FROM (
-			SELECT unix_milli, tag_key, tag_type, string_value, number_value FROM %s
-			UNION ALL
-			SELECT unix_milli, tag_key, tag_type, string_value, number_value FROM %s
-		)
+		FROM %s
 		WHERE unix_milli >= toUnixTimestamp(now() - INTERVAL 6 HOUR) * 1000
 		  AND tag_type = '%s'
 		GROUP BY tag_key, tag_type
 		HAVING uniq(string_value) > %d OR uniq(number_value) > %d
 		SETTINGS max_threads = 2`,
 		distributedTagAttrsV2Table,
+		utils.TagTypeBodyField,
+		w.limits.MaxStringDistinctValues,
+		w.limits.MaxStringDistinctValues,
+	)
+	type legacyRow struct {
+		TagKey string `ch:"tag_key"`
+		TagType string `ch:"tag_type"`
+	}
+	var legacyRows []legacyRow
+	if err := w.conn.Select(ctx, &legacyRows, legacyQuery); err != nil {
+		w.logger.Error("failed to fetch legacy json skip keys", zap.Error(err))
+		return
+	}
+
+	tenantQuery := fmt.Sprintf(`
+		SELECT org_id, project_id, tag_key, tag_type
+		FROM %s
+		WHERE unix_milli >= toUnixTimestamp(now() - INTERVAL 6 HOUR) * 1000
+		  AND tag_type = '%s'
+		GROUP BY org_id, project_id, tag_key, tag_type
+		HAVING uniq(string_value) > %d OR uniq(number_value) > %d
+		SETTINGS max_threads = 2`,
 		distributedTagAttrsV3Table,
 		utils.TagTypeBodyField,
 		w.limits.MaxStringDistinctValues,
 		w.limits.MaxStringDistinctValues,
 	)
-	type row struct {
-		TagKey  string `ch:"tag_key"`
+	type tenantRow struct {
+		OrgID string `ch:"org_id"`
+		ProjectID string `ch:"project_id"`
+		TagKey string `ch:"tag_key"`
 		TagType string `ch:"tag_type"`
 	}
-	var rows []row
-	if err := w.conn.Select(ctx, &rows, query); err != nil {
-		w.logger.Error("failed to fetch json skip keys", zap.Error(err))
+	var tenantRows []tenantRow
+	if err := w.conn.Select(ctx, &tenantRows, tenantQuery); err != nil {
+		w.logger.Error("failed to fetch tenant json skip keys", zap.Error(err))
 		return
 	}
-	newMap := make(map[string]struct{}, len(rows))
-	for _, r := range rows {
+
+	newMap := make(map[string]struct{}, len(legacyRows)+len(tenantRows))
+	for _, r := range legacyRows {
 		key := utils.MakeKeyForSkipKeys(utils.TagType(r.TagType), r.TagKey)
 		newMap[key] = struct{}{}
+	}
+	for _, r := range tenantRows {
+		key := utils.MakeKeyForSkipKeys(utils.TagType(r.TagType), r.TagKey)
+		newMap[r.OrgID+"/"+r.ProjectID+"/"+key] = struct{}{}
 	}
 	w.skipKeys.Store(&newMap)
 }
