@@ -12,6 +12,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/SigNoz/signoz-otel-collector/constants"
 	"github.com/SigNoz/signoz-otel-collector/pkg/pdatagen/plogsgen"
+	"github.com/SigNoz/signoz-otel-collector/pkg/tagdedup"
 	"github.com/SigNoz/signoz-otel-collector/usage"
 	"github.com/SigNoz/signoz-otel-collector/utils"
 	"github.com/goccy/go-json"
@@ -895,4 +896,64 @@ func TestExporterPushLogsDataWritesTenantScopedTagMetadata(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return mock.ExpectationsWereMet() == nil
 	}, 10*time.Second, 100*time.Millisecond)
+}
+
+
+// tenantMetadataCaptureBatch captures key-metadata rows without requiring ClickHouse.
+type tenantMetadataCaptureBatch struct {
+	driver.Batch
+	rows [][]any
+}
+
+func (b *tenantMetadataCaptureBatch) Append(values ...any) error {
+	row := append([]any(nil), values...)
+	b.rows = append(b.rows, row)
+	return nil
+}
+
+func TestTenantAttributeKeyMetadataIsIsolatedByOrganizationAndProject(t *testing.T) {
+	cache := ttlcache.New(
+		ttlcache.WithTTL[string, struct{}](240*time.Minute),
+		ttlcache.WithCapacity[string, struct{}](50000),
+	)
+	defer cache.Stop()
+
+	exp := &clickhouseLogsExporter{
+		logger:    zap.NewNop(),
+		keysCache: cache,
+	}
+	batch := &tenantMetadataCaptureBatch{}
+	deduper := tagdedup.New()
+
+	const (
+		orgA     = "11111111-1111-4111-8111-111111111111"
+		orgB     = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+		project1 = "22222222-2222-4222-8222-222222222222"
+		project2 = "33333333-3333-4333-8333-333333333333"
+	)
+
+	// The same attribute key must be registered independently for each tenant.
+	for _, tenant := range [][2]string{
+		{orgA, project1},
+		{orgA, project2},
+		{orgB, project1},
+	} {
+		exp.addAttrsToAttributeKeysStatement(
+			nil, nil, batch, nil,
+			tenant[0], tenant[1],
+			"http.method", utils.TagTypeAttribute, utils.FieldDataTypeString, deduper,
+		)
+	}
+
+	// A repeated key in the same tenant must still be deduplicated.
+	exp.addAttrsToAttributeKeysStatement(
+		nil, nil, batch, nil,
+		orgA, project1,
+		"http.method", utils.TagTypeAttribute, utils.FieldDataTypeString, deduper,
+	)
+
+	require.Len(t, batch.rows, 3)
+	require.Equal(t, []any{orgA, project1, "http.method", utils.FieldDataTypeString}, batch.rows[0])
+	require.Equal(t, []any{orgA, project2, "http.method", utils.FieldDataTypeString}, batch.rows[1])
+	require.Equal(t, []any{orgB, project1, "http.method", utils.FieldDataTypeString}, batch.rows[2])
 }
