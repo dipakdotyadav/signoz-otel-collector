@@ -150,9 +150,25 @@ func appendTypeSet(ta *typesAccumulator, signal, context string, stmt driver.Bat
 // configured JSON sources (body today, attributes in future) per log record,
 // feeding both type collection and value suggestions from one traversal.
 //
-// It writes to two tables per flush:
-//   - signoz_metadata.distributed_json_path_types  (path → ClickHouse type)
-//   - signoz_logs.distributed_tag_attributes_v2    (path → value, tag_type=source)
+// It writes path types to the shared field-key metadata table and values to
+// V2 for legacy records or tenant-keyed V3 for project-authenticated records.
+// tenantScopeFromResource distinguishes legacy resources from authenticated
+// project resources. A partially present canonical identity is an error: it
+// must never fall back to the organization-wide metadata table.
+func tenantScopeFromResource(resource pcommon.Resource) (orgID, projectID string, scoped bool, err error) {
+	orgValue, hasOrg := resource.Attributes().Get(orgIDResourceAttribute)
+	projectValue, hasProject := resource.Attributes().Get(projectIDResourceAttribute)
+	if !hasOrg && !hasProject {
+		return "", "", false, nil
+	}
+	if !hasOrg || !hasProject ||
+		orgValue.Type() != pcommon.ValueTypeStr || projectValue.Type() != pcommon.ValueTypeStr ||
+		strings.TrimSpace(orgValue.Str()) == "" || strings.TrimSpace(projectValue.Str()) == "" {
+		return "", "", false, fmt.Errorf("incomplete authenticated tenant identity on JSON metadata resource")
+	}
+	return orgValue.Str(), projectValue.Str(), true, nil
+}
+
 type jsonMetadataWriter struct {
 	cfg              JSONConfig
 	logger           *zap.Logger
@@ -311,13 +327,12 @@ func (w *jsonMetadataWriter) Process(ctx context.Context, ld plog.Logs) error {
 
 	rls := ld.ResourceLogs()
 	for i := 0; i < rls.Len(); i++ {
-		resource := rls.At(i).Resource()
-		orgValue, hasOrg := resource.Attributes().Get(orgIDResourceAttribute)
-		projectValue, hasProject := resource.Attributes().Get(projectIDResourceAttribute)
+		orgID, projectID, scoped, err := tenantScopeFromResource(rls.At(i).Resource())
+		if err != nil {
+			return err
+		}
 		activeVA := legacyVA
-		if hasOrg && hasProject && orgValue.Type() == pcommon.ValueTypeStr &&
-			projectValue.Type() == pcommon.ValueTypeStr &&
-			strings.TrimSpace(orgValue.Str()) != "" && strings.TrimSpace(projectValue.Str()) != "" {
+		if scoped {
 			if tenantVA == nil {
 				tenantStmt, err := w.conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s (org_id, project_id, unix_milli, tag_key, tag_type, tag_data_type, string_value, number_value)", distributedTagAttrsV3Table), driver.WithReleaseConnection())
 				if err != nil {
@@ -326,8 +341,8 @@ func (w *jsonMetadataWriter) Process(ctx context.Context, ld plog.Logs) error {
 				defer func() { _ = tenantStmt.Close() }()
 				tenantVA = newAccumulator(tenantStmt, "", "", true)
 			}
-			tenantVA.orgID = orgValue.Str()
-			tenantVA.projectID = projectValue.Str()
+			tenantVA.orgID = orgID
+			tenantVA.projectID = projectID
 			activeVA = tenantVA
 		}
 
