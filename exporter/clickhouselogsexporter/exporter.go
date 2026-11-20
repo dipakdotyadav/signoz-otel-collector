@@ -53,6 +53,7 @@ import (
 
 const (
 	distributedTagAttributesV2       = "distributed_tag_attributes_v2"
+	distributedTagAttributesV3       = "distributed_tag_attributes_v3"
 	distributedLogsTableV2           = "distributed_logs_v2"
 	logsTableV2                      = "logs_v2"
 	distributedLogsResourceV2        = "distributed_logs_v2_resource"
@@ -471,6 +472,7 @@ func (e *clickhouseLogsExporter) pushToClickhouse(ctx context.Context, ld plog.L
 	var insertLogsStmtV2 driver.Batch
 	var insertResourcesStmtV2 driver.Batch
 	var tagStatementV2 driver.Batch
+	var tenantTagStatementV3 driver.Batch
 	var attributeKeysStmt driver.Batch
 	var resourceKeysStmt driver.Batch
 	var tenantAttributeKeysStmt driver.Batch
@@ -517,6 +519,12 @@ func (e *clickhouseLogsExporter) pushToClickhouse(ctx context.Context, ld plog.L
 	defer func() { _ = resourceKeysStmt.Close() }()
 
 	if hasTenantScope {
+		tenantTagStatementV3, err = e.db.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s.%s", databaseName, distributedTagAttributesV3), driver.WithReleaseConnection())
+		if err != nil {
+			return fmt.Errorf("PrepareTenantTagBatchV3:%w", err)
+		}
+		defer func() { _ = tenantTagStatementV3.Close() }()
+
 		tenantAttributeKeysStmt, err = e.db.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s.%s", databaseName, distributedLogsAttributeKeysV2), driver.WithReleaseConnection())
 		if err != nil {
 			return fmt.Errorf("PrepareTenantAttributeKeysBatch:%w", err)
@@ -574,7 +582,7 @@ func (e *clickhouseLogsExporter) pushToClickhouse(ctx context.Context, ld plog.L
 					return nil
 				}
 				// tags for resource/scope/attrs
-				if err := e.addAttrsToTagStatement(tagStatementV2, attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, rec.orgID, rec.projectID, utils.TagTypeResource, rec.resourceMap, shouldSkipKeys, deduper); err != nil {
+				if err := e.addAttrsToTagStatement(tagStatementV2, tenantTagStatementV3, attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, rec.orgID, rec.projectID, utils.TagTypeResource, rec.resourceMap, shouldSkipKeys, deduper); err != nil {
 					return err
 				}
 				if err := e.addAttrsToTagStatement(tagStatementV2, attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, rec.orgID, rec.projectID, utils.TagTypeScope, rec.scopeMap, shouldSkipKeys, deduper); err != nil {
@@ -788,6 +796,7 @@ producerIteration:
 	}
 	if hasTenantScope {
 		batches = append(batches,
+			pendingBatch{tenantTagStatementV3, distributedTagAttributesV3},
 			pendingBatch{tenantAttributeKeysStmt, distributedLogsAttributeKeysV2},
 			pendingBatch{tenantResourceKeysStmt, distributedLogsResourceKeysV2},
 		)
@@ -938,6 +947,7 @@ func (e *clickhouseLogsExporter) addAttrsToAttributeKeysStatement(
 
 func (e *clickhouseLogsExporter) addAttrsToTagStatement(
 	tagStatementV2 driver.Batch,
+	tenantTagStatementV3 driver.Batch,
 	attributeKeysStmt driver.Batch,
 	resourceKeysStmt driver.Batch,
 	tenantAttributeKeysStmt driver.Batch,
@@ -968,14 +978,12 @@ func (e *clickhouseLogsExporter) addAttrsToTagStatement(
 			e.logger.Debug("key has been skipped", zap.String("key", key))
 			continue
 		}
-		err := tagStatementV2.Append(
-			unixMilli,
-			attrKey,
-			tagType,
-			utils.FieldDataTypeString,
-			attrVal,
-			nil,
-		)
+		var err error
+		if orgID != "" && projectID != "" {
+			err = tenantTagStatementV3.Append(orgID, projectID, unixMilli, attrKey, tagType, utils.FieldDataTypeString, attrVal, nil)
+		} else {
+			err = tagStatementV2.Append(unixMilli, attrKey, tagType, utils.FieldDataTypeString, attrVal, nil)
+		}
 		if err != nil {
 			return fmt.Errorf("could not append string attribute to batch, err: %w", err)
 		}
@@ -994,14 +1002,12 @@ func (e *clickhouseLogsExporter) addAttrsToTagStatement(
 			e.logger.Debug("key has been skipped", zap.String("key", key))
 			continue
 		}
-		err := tagStatementV2.Append(
-			unixMilli,
-			numKey,
-			tagType,
-			utils.FieldDataTypeFloat64,
-			nil,
-			numVal,
-		)
+		var err error
+		if orgID != "" && projectID != "" {
+			err = tenantTagStatementV3.Append(orgID, projectID, unixMilli, numKey, tagType, utils.FieldDataTypeFloat64, nil, numVal)
+		} else {
+			err = tagStatementV2.Append(unixMilli, numKey, tagType, utils.FieldDataTypeFloat64, nil, numVal)
+		}
 		if err != nil {
 			return fmt.Errorf("could not append number attribute to batch, err: %w", err)
 		}
@@ -1021,14 +1027,12 @@ func (e *clickhouseLogsExporter) addAttrsToTagStatement(
 			continue
 		}
 
-		err := tagStatementV2.Append(
-			unixMilli,
-			boolKey,
-			tagType,
-			utils.FieldDataTypeBool,
-			nil,
-			nil,
-		)
+		var err error
+		if orgID != "" && projectID != "" {
+			err = tenantTagStatementV3.Append(orgID, projectID, unixMilli, boolKey, tagType, utils.FieldDataTypeBool, nil, nil)
+		} else {
+			err = tagStatementV2.Append(unixMilli, boolKey, tagType, utils.FieldDataTypeBool, nil, nil)
+		}
 		if err != nil {
 			return fmt.Errorf("could not append bool attribute to batch, err: %w", err)
 		}
