@@ -766,5 +766,57 @@ ORDER BY name ASC`,
 			DropTableOperation{Database: "signoz_logs", Table: "tag_attributes_v3"},
 		},
 	},
-	// Next migration id will be 2007
+	{
+		// Tenant-scoped JSON body field keys. The legacy distributed_field_keys
+		// table remains unchanged for organization-wide installations.
+		MigrationID: 2007,
+		UpItems: []Operation{
+			CreateTableOperation{
+				Database: SignozMetadataDB,
+				Table: "tenant_field_keys_v2",
+				Columns: []Column{
+					{Name: "org_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "project_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "signal", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "field_context", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: constants.FieldKeysTableNameColumn, Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: constants.FieldKeysTableDataTypeColumn, Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: constants.FieldKeysTableLastSeenColumn, Type: ColumnTypeUInt64, Codec: "DoubleDelta, LZ4"},
+				},
+				Engine: ReplacingMergeTree{
+					MergeTree: MergeTree{
+						PartitionBy: "cityHash64(org_id, project_id) % 16",
+						OrderBy: "(org_id, project_id, signal, field_context, field_name, field_data_type)",
+						TTL: "toDateTime(last_seen / 1000000000) + INTERVAL 15 DAY",
+						Settings: TableSettings{
+							{Name: "index_granularity", Value: "8192"},
+						},
+					},
+				},
+			},
+			CreateTableOperation{
+				Database: SignozMetadataDB,
+				Table: "distributed_tenant_field_keys_v2",
+				Columns: []Column{
+					{Name: "org_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "project_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "signal", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "field_context", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: constants.FieldKeysTableNameColumn, Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: constants.FieldKeysTableDataTypeColumn, Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: constants.FieldKeysTableLastSeenColumn, Type: ColumnTypeUInt64, Codec: "DoubleDelta, LZ4"},
+				},
+				Engine: Distributed{
+					Database: SignozMetadataDB,
+					Table: "tenant_field_keys_v2",
+					ShardingKey: "cityHash64(org_id, project_id)",
+				},
+			},
+		},
+		DownItems: []Operation{
+			DropTableOperation{Database: SignozMetadataDB, Table: "distributed_tenant_field_keys_v2"},
+			DropTableOperation{Database: SignozMetadataDB, Table: "tenant_field_keys_v2"},
+		},
+	},
+	// Next migration id will be 2008
 }
