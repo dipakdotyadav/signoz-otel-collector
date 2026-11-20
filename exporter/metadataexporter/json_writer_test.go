@@ -43,6 +43,45 @@ func newTestValueAccumulator(t *testing.T) *valueAccumulator {
 	}
 }
 
+func TestTenantScopeFromResource(t *testing.T) {
+	t.Run("legacy resource remains unscoped", func(t *testing.T) {
+		resource := pcommon.NewResource()
+		orgID, projectID, scoped, err := tenantScopeFromResource(resource)
+		require.NoError(t, err)
+		require.False(t, scoped)
+		require.Empty(t, orgID)
+		require.Empty(t, projectID)
+	})
+
+	t.Run("complete authenticated identity is scoped", func(t *testing.T) {
+		resource := pcommon.NewResource()
+		resource.Attributes().PutStr(orgIDResourceAttribute, "11111111-1111-4111-8111-111111111111")
+		resource.Attributes().PutStr(projectIDResourceAttribute, "22222222-2222-4222-8222-222222222222")
+		orgID, projectID, scoped, err := tenantScopeFromResource(resource)
+		require.NoError(t, err)
+		require.True(t, scoped)
+		require.Equal(t, "11111111-1111-4111-8111-111111111111", orgID)
+		require.Equal(t, "22222222-2222-4222-8222-222222222222", projectID)
+	})
+
+	t.Run("partial identity fails closed", func(t *testing.T) {
+		resource := pcommon.NewResource()
+		resource.Attributes().PutStr(orgIDResourceAttribute, "11111111-1111-4111-8111-111111111111")
+		_, _, scoped, err := tenantScopeFromResource(resource)
+		require.ErrorContains(t, err, "incomplete authenticated tenant identity")
+		require.False(t, scoped)
+	})
+
+	t.Run("non string identity fails closed", func(t *testing.T) {
+		resource := pcommon.NewResource()
+		resource.Attributes().PutInt(orgIDResourceAttribute, 123)
+		resource.Attributes().PutStr(projectIDResourceAttribute, "22222222-2222-4222-8222-222222222222")
+		_, _, scoped, err := tenantScopeFromResource(resource)
+		require.ErrorContains(t, err, "incomplete authenticated tenant identity")
+		require.False(t, scoped)
+	})
+}
+
 func TestWalk_EndToEndTypes(t *testing.T) {
 	input := map[string]any{
 		"_p": "F",
