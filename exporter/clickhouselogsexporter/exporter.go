@@ -342,7 +342,7 @@ func (e *clickhouseLogsExporter) doFetchShouldSkipKeys() {
 		for _, key := range keys {
 			mapKey := utils.MakeKeyForAttributeKeys(key.TagKey, utils.TagType(key.TagType), utils.FieldDataType(key.TagDataType))
 			if key.OrgID != "" && key.ProjectID != "" {
-				mapKey = key.OrgID + "\\x1f" + key.ProjectID + "\\x1f" + mapKey
+				mapKey = key.OrgID + "\x1f" + key.ProjectID + "\x1f" + mapKey
 			}
 			e.logger.Debug("adding to should skip keys", zap.String("key", mapKey), zap.Any("string_count", key.StringCount), zap.Any("number_count", key.NumberCount))
 			shouldSkipKeys[mapKey] = key
@@ -986,7 +986,7 @@ func (e *clickhouseLogsExporter) addAttrsToTagStatement(
 
 		key := utils.MakeKeyForAttributeKeys(attrKey, tagType, utils.FieldDataTypeString)
 		if orgID != "" && projectID != "" {
-			key = orgID + "\\x1f" + projectID + "\\x1f" + key
+			key = orgID + "\x1f" + projectID + "\x1f" + key
 		}
 		if _, ok := shouldSkipKeys[key]; ok {
 			e.logger.Debug("key has been skipped", zap.String("key", key))
@@ -1013,7 +1013,7 @@ func (e *clickhouseLogsExporter) addAttrsToTagStatement(
 		e.addAttrsToAttributeKeysStatement(attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, orgID, projectID, numKey, tagType, utils.FieldDataTypeFloat64, deduper)
 		key := utils.MakeKeyForAttributeKeys(numKey, tagType, utils.FieldDataTypeFloat64)
 		if orgID != "" && projectID != "" {
-			key = orgID + "\\x1f" + projectID + "\\x1f" + key
+			key = orgID + "\x1f" + projectID + "\x1f" + key
 		}
 		if _, ok := shouldSkipKeys[key]; ok {
 			e.logger.Debug("key has been skipped", zap.String("key", key))
@@ -1040,7 +1040,7 @@ func (e *clickhouseLogsExporter) addAttrsToTagStatement(
 
 		key := utils.MakeKeyForAttributeKeys(boolKey, tagType, utils.FieldDataTypeBool)
 		if orgID != "" && projectID != "" {
-			key = orgID + "\\x1f" + projectID + "\\x1f" + key
+			key = orgID + "\x1f" + projectID + "\x1f" + key
 		}
 		if _, ok := shouldSkipKeys[key]; ok {
 			e.logger.Debug("key has been skipped", zap.String("key", key))
