@@ -104,16 +104,25 @@ func TestExporterInit(t *testing.T) {
 		log.Fatalf("an error '%s' was not expected when opening a stub database connection", err)
 	}
 
-	cols := make([]cmock.ColumnType, 0)
-	cols = append(cols, cmock.ColumnType{Name: "tag_key", Type: "String"})
-	cols = append(cols, cmock.ColumnType{Name: "tag_type", Type: "String"})
-	cols = append(cols, cmock.ColumnType{Name: "tag_data_type", Type: "String"})
-	cols = append(cols, cmock.ColumnType{Name: "string_count", Type: "UInt64"})
-	cols = append(cols, cmock.ColumnType{Name: "number_count", Type: "UInt64"})
+	cols := []cmock.ColumnType{
+		{Name: "org_id", Type: "String"},
+		{Name: "project_id", Type: "String"},
+		{Name: "tag_key", Type: "String"},
+		{Name: "tag_type", Type: "String"},
+		{Name: "tag_data_type", Type: "String"},
+		{Name: "string_count", Type: "UInt64"},
+		{Name: "number_count", Type: "UInt64"},
+	}
+	legacyRows := cmock.NewRows(cols, [][]interface{}{
+		{"", "", "key1", "string", "string", 2, 1},
+		{"", "", "key2", "number", "number", 1, 2},
+	})
+	tenantRows := cmock.NewRows(cols, [][]interface{}{
+		{"11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", "key1", "string", "string", 2, 1},
+	})
 
-	rows := cmock.NewRows(cols, [][]interface{}{{"key1", "string", "string", 2, 1}, {"key2", "number", "number", 1, 2}})
-
-	mock.ExpectSelect(".*SETTINGS max_threads = 2").WillReturnRows(rows)
+	mock.ExpectSelect(".*SETTINGS max_threads = 2").WillReturnRows(legacyRows)
+	mock.ExpectSelect(".*SETTINGS max_threads = 2").WillReturnRows(tenantRows)
 	mock.ExpectClose()
 
 	exporter := setupTestExporter(t, mock)
