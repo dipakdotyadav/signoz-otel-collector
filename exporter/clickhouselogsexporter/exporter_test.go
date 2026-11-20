@@ -840,3 +840,48 @@ func TestGetJSONColumnBodyEmptyMap(t *testing.T) {
 
 	assert.Equal(t, string(b), getJSONColumnBody(body))
 }
+
+
+func TestExporterPushLogsDataWritesTenantScopedTagMetadata(t *testing.T) {
+	mock, err := cmock.NewClickHouseWithQueryMatcher(nil, sqlmock.QueryMatcherRegexp)
+	require.NoError(t, err)
+
+	tagV2 := mock.ExpectPrepareBatch("INSERT INTO signoz_logs.distributed_tag_attributes_v2")
+	tenantTagV3 := mock.ExpectPrepareBatch("INSERT INTO signoz_logs.distributed_tag_attributes_v3")
+	attributeKeysV1 := mock.ExpectPrepareBatch("INSERT INTO signoz_logs.distributed_logs_attribute_keys")
+	resourceKeysV1 := mock.ExpectPrepareBatch("INSERT INTO signoz_logs.distributed_logs_resource_keys")
+	attributeKeysV2 := mock.ExpectPrepareBatch("INSERT INTO signoz_logs.distributed_logs_attribute_keys_v2")
+	resourceKeysV2 := mock.ExpectPrepareBatch("INSERT INTO signoz_logs.distributed_logs_resource_keys_v2")
+	logsV2 := mock.ExpectPrepareBatch("INSERT INTO signoz_logs.distributed_logs_v2.*")
+	logsResourceV2 := mock.ExpectPrepareBatch("INSERT INTO signoz_logs.distributed_logs_v2_resource.*")
+
+	tenantTagV3.ExpectAppend()
+	attributeKeysV2.ExpectAppend()
+	resourceKeysV2.ExpectAppend()
+	logsV2.ExpectAppend()
+	logsResourceV2.ExpectAppend()
+
+	tagV2.ExpectSend()
+	tenantTagV3.ExpectSend()
+	attributeKeysV1.ExpectSend()
+	resourceKeysV1.ExpectSend()
+	attributeKeysV2.ExpectSend()
+	resourceKeysV2.ExpectSend()
+	logsV2.ExpectSend()
+	logsResourceV2.ExpectSend()
+
+	mock.ExpectExec(".*insert into signoz_logs.distributed_usage.*").WithArgs()
+	mock.ExpectClose()
+
+	exporter := setupTestExporter(t, mock)
+	logs := plogsgen.Generate()
+	resourceAttrs := logs.ResourceLogs().At(0).Resource().Attributes()
+	resourceAttrs.PutStr("signoz.org.id", "11111111-1111-4111-8111-111111111111")
+	resourceAttrs.PutStr("signoz.project.id", "22222222-2222-4222-8222-222222222222")
+
+	require.NoError(t, exporter.pushLogsData(context.Background(), logs))
+	require.NoError(t, exporter.Shutdown(context.Background()))
+	require.Eventually(t, func() bool {
+		return mock.ExpectationsWereMet() == nil
+	}, 10*time.Second, 100*time.Millisecond)
+}
