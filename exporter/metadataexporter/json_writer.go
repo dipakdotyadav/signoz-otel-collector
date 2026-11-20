@@ -24,6 +24,9 @@ import (
 const (
 	distributedFieldKeysTable  = constants.SignozMetadataDB + "." + constants.DistributedFieldKeysTable
 	distributedTagAttrsV2Table = "signoz_logs.distributed_tag_attributes_v2"
+	distributedTagAttrsV3Table = "signoz_logs.distributed_tag_attributes_v3"
+	orgIDResourceAttribute = "signoz.org.id"
+	projectIDResourceAttribute = "signoz.project.id"
 
 	jsonArraySuffix  = "[]"
 	jsonMessageField = "message"
@@ -43,6 +46,9 @@ var (
 // applying cardinality guards before each append.
 type valueAccumulator struct {
 	stmt driver.Batch
+	orgID string
+	projectID string
+	tenantAware bool
 
 	shouldSkipFromDB func(key string) bool
 	shouldSkipUVT    func(key string) bool
@@ -76,6 +82,13 @@ func (va *valueAccumulator) recordForSlice(path string, val pcommon.Value, conte
 }
 
 // Supports String, Bytes, Int, Double, and Bool values; any other type is a caller error.
+func (va *valueAccumulator) appendRow(unixMilli int64, path string, context utils.TagType, datatype utils.FieldDataType, stringValue any, numberValue any) error {
+	if va.tenantAware {
+		return va.stmt.Append(va.orgID, va.projectID, unixMilli, path, context, datatype, stringValue, numberValue)
+	}
+	return va.stmt.Append(unixMilli, path, context, datatype, stringValue, numberValue)
+}
+
 func (va *valueAccumulator) appendValue(path string, val pcommon.Value, context utils.TagType, datatype utils.FieldDataType, unixMilli int64) error {
 	switch val.Type() {
 	case pcommon.ValueTypeStr, pcommon.ValueTypeBytes:
@@ -86,7 +99,7 @@ func (va *valueAccumulator) appendValue(path string, val pcommon.Value, context 
 		if va.shouldSkipOrTrack(path, context, str) {
 			return nil
 		}
-		return va.stmt.Append(unixMilli, path, context, datatype, str, nil)
+		return va.appendRow(unixMilli, path, context, datatype, str, nil)
 	case pcommon.ValueTypeInt, pcommon.ValueTypeDouble:
 		floatVal := val.Double()
 		if val.Type() == pcommon.ValueTypeInt {
@@ -95,10 +108,10 @@ func (va *valueAccumulator) appendValue(path string, val pcommon.Value, context 
 		if va.shouldSkipOrTrack(path, context, floatVal) {
 			return nil
 		}
-		return va.stmt.Append(unixMilli, path, context, datatype, nil, floatVal)
+		return va.appendRow(unixMilli, path, context, datatype, nil, floatVal)
 	case pcommon.ValueTypeBool:
 		// Cardinality is always 2; no UVT tracking needed.
-		return va.stmt.Append(unixMilli, path, context, datatype, nil, nil)
+		return va.appendRow(unixMilli, path, context, datatype, nil, nil)
 	case pcommon.ValueTypeSlice:
 		for i := 0; i < val.Slice().Len(); i++ {
 			err := va.appendValue(path, val.Slice().At(i), context, datatype, unixMilli)
@@ -271,21 +284,46 @@ func (w *jsonMetadataWriter) skipUVT(key string) bool {
 func (w *jsonMetadataWriter) Process(ctx context.Context, ld plog.Logs) error {
 	bodyTypes := &typesAccumulator{}
 
-	vaStmt, err := w.conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", distributedTagAttrsV2Table), driver.WithReleaseConnection())
+	// Keep legacy organization-level ingestion on V2. Only records carrying
+	// both trusted tenant attributes (added by signoztenantcontext) are written
+	// to V3, whose primary key includes organization and project.
+	legacyStmt, err := w.conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s", distributedTagAttrsV2Table), driver.WithReleaseConnection())
 	if err != nil {
-		return fmt.Errorf("failed to prepare tag attrs batch: %w", err)
+		return fmt.Errorf("failed to prepare legacy tag attrs batch: %w", err)
 	}
-	defer func() { _ = vaStmt.Close() }()
+	defer func() { _ = legacyStmt.Close() }()
 
-	va := &valueAccumulator{
-		stmt:             vaStmt,
-		shouldSkipFromDB: w.skipStoringInDB,
-		shouldSkipUVT:    w.skipUVT,
-		addToUVT:         w.valueTracker.AddValue,
+	tenantStmt, err := w.conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s (org_id, project_id, unix_milli, tag_key, tag_type, tag_data_type, string_value, number_value)", distributedTagAttrsV3Table), driver.WithReleaseConnection())
+	if err != nil {
+		return fmt.Errorf("failed to prepare tenant tag attrs batch: %w", err)
 	}
+	defer func() { _ = tenantStmt.Close() }()
+
+	newAccumulator := func(stmt driver.Batch, orgID, projectID string, tenantAware bool) *valueAccumulator {
+		return &valueAccumulator{
+			stmt: stmt, orgID: orgID, projectID: projectID, tenantAware: tenantAware,
+			shouldSkipFromDB: w.skipStoringInDB,
+			shouldSkipUVT: w.skipUVT,
+			addToUVT: w.valueTracker.AddValue,
+		}
+	}
+	legacyVA := newAccumulator(legacyStmt, "", "", false)
+	tenantVA := newAccumulator(tenantStmt, "", "", true)
 
 	rls := ld.ResourceLogs()
 	for i := 0; i < rls.Len(); i++ {
+		resource := rls.At(i).Resource()
+		orgValue, hasOrg := resource.Attributes().Get(orgIDResourceAttribute)
+		projectValue, hasProject := resource.Attributes().Get(projectIDResourceAttribute)
+		activeVA := legacyVA
+		if hasOrg && hasProject && orgValue.Type() == pcommon.ValueTypeStr &&
+			projectValue.Type() == pcommon.ValueTypeStr &&
+			strings.TrimSpace(orgValue.Str()) != "" && strings.TrimSpace(projectValue.Str()) != "" {
+			tenantVA.orgID = orgValue.Str()
+			tenantVA.projectID = projectValue.Str()
+			activeVA = tenantVA
+		}
+
 		sls := rls.At(i).ScopeLogs()
 		for j := 0; j < sls.Len(); j++ {
 			logs := sls.At(j).LogRecords()
@@ -301,7 +339,7 @@ func (w *jsonMetadataWriter) Process(ctx context.Context, ld plog.Logs) error {
 					w.logger.Error("body expected to be map", zap.String("body.type", val.Type().String()))
 					continue
 				}
-				if numOfKeys, err := w.walkNode(ctx, "", val, 0, utils.TagTypeBodyField, ts.AsTime().UnixMilli(), bodyTypes, va); err != nil {
+				if numOfKeys, err := w.walkNode(ctx, "", val, 0, utils.TagTypeBodyField, ts.AsTime().UnixMilli(), bodyTypes, activeVA); err != nil {
 					w.logger.Error("json walk failed", zap.String("source", string(utils.TagTypeBodyField)), zap.Error(err))
 				} else {
 					w.logsProcessed.Add(ctx, 1)
@@ -313,7 +351,8 @@ func (w *jsonMetadataWriter) Process(ctx context.Context, ld plog.Logs) error {
 
 	g, gCtx := errgroup.WithContext(ctx)
 	g.Go(func() error { return w.flushTypeSet(gCtx, bodyTypes) })
-	g.Go(va.flush)
+	g.Go(legacyVA.flush)
+	g.Go(tenantVA.flush)
 	return g.Wait()
 }
 
