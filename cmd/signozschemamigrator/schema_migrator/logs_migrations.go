@@ -706,5 +706,65 @@ ORDER BY name ASC`,
 			DropTableOperation{Database: "signoz_logs", Table: "logs_attribute_keys_v2"},
 		},
 	},
-	// Next migration id will be 2006
+	{
+		// Tenant-scoped tag values. The legacy tag table remains available for
+		// unscoped ingestion and older readers during the migration.
+		MigrationID: 2006,
+		UpItems: []Operation{
+			CreateTableOperation{
+				Database: "signoz_logs",
+				Table:    "tag_attributes_v3",
+				Columns: []Column{
+					{Name: "org_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "project_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "unix_milli", Type: ColumnTypeInt64, Codec: "Delta(8), ZSTD(1)"},
+					{Name: "tag_key", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "tag_type", Type: LowCardinalityColumnType{ColumnTypeString}, Codec: "ZSTD(1)"},
+					{Name: "tag_data_type", Type: LowCardinalityColumnType{ColumnTypeString}, Codec: "ZSTD(1)"},
+					{Name: "string_value", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "number_value", Type: NullableColumnType{ColumnTypeFloat64}, Codec: "ZSTD(1)"},
+				},
+				Indexes: []Index{
+					{Name: "string_value_index", Expression: "string_value", Type: "ngrambf_v1(4, 1024, 3, 0)", Granularity: 1},
+					{Name: "number_value_index", Expression: "number_value", Type: "minmax", Granularity: 1},
+				},
+				Engine: ReplacingMergeTree{
+					MergeTree: MergeTree{
+						PartitionBy: "toDate(unix_milli / 1000)",
+						OrderBy: "(org_id, project_id, tag_key, tag_type, tag_data_type, string_value, number_value)",
+						TTL: "toDateTime(unix_milli / 1000) + toIntervalSecond(1296000)",
+						Settings: TableSettings{
+							{Name: "index_granularity", Value: "8192"},
+							{Name: "ttl_only_drop_parts", Value: "1"},
+							{Name: "allow_nullable_key", Value: "1"},
+						},
+					},
+				},
+			},
+			CreateTableOperation{
+				Database: "signoz_logs",
+				Table:    "distributed_tag_attributes_v3",
+				Columns: []Column{
+					{Name: "org_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "project_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "unix_milli", Type: ColumnTypeInt64, Codec: "Delta(8), ZSTD(1)"},
+					{Name: "tag_key", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "tag_type", Type: LowCardinalityColumnType{ColumnTypeString}, Codec: "ZSTD(1)"},
+					{Name: "tag_data_type", Type: LowCardinalityColumnType{ColumnTypeString}, Codec: "ZSTD(1)"},
+					{Name: "string_value", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "number_value", Type: NullableColumnType{ColumnTypeFloat64}, Codec: "ZSTD(1)"},
+				},
+				Engine: Distributed{
+					Database: "signoz_logs",
+					Table: "tag_attributes_v3",
+					ShardingKey: "cityHash64(org_id, project_id)",
+				},
+			},
+		},
+		DownItems: []Operation{
+			DropTableOperation{Database: "signoz_logs", Table: "distributed_tag_attributes_v3"},
+			DropTableOperation{Database: "signoz_logs", Table: "tag_attributes_v3"},
+		},
+	},
+	// Next migration id will be 2007
 }
