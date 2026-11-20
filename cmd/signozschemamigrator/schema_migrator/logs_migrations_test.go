@@ -21,6 +21,7 @@ func TestLogsMigrationsExactNature(t *testing.T) {
 			LogsMigrations[9], // 2004 (sync)
 			LogsMigrations[10], // 2005 (sync): tenant-scoped log metadata tables
 			LogsMigrations[11], // 2006 (sync): tenant-scoped log tag values
+			LogsMigrations[12], // 2007 (sync): tenant-scoped JSON field keys
 		},
 		[]SchemaMigrationRecord{
 			LogsMigrations[0], // 1000 (async)
