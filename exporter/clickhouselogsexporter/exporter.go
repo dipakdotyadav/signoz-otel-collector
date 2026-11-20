@@ -126,6 +126,8 @@ const (
 )
 
 type shouldSkipKey struct {
+	OrgID       string `ch:"org_id"`
+	ProjectID   string `ch:"project_id"`
 	TagKey      string `ch:"tag_key"`
 	TagType     string `ch:"tag_type"`
 	TagDataType string `ch:"tag_data_type"`
@@ -314,28 +316,37 @@ func (e *clickhouseLogsExporter) Start(ctx context.Context, host component.Host)
 }
 
 func (e *clickhouseLogsExporter) doFetchShouldSkipKeys() {
-	query := fmt.Sprintf(`
-		SELECT tag_key, tag_type, tag_data_type, uniq(string_value) as string_count, uniq(number_value) as number_count
+	legacyQuery := fmt.Sprintf(`
+		SELECT '' AS org_id, '' AS project_id, tag_key, tag_type, tag_data_type, uniq(string_value) as string_count, uniq(number_value) as number_count
 		FROM %s.%s
 		WHERE unix_milli >= (toUnixTimestamp(now() - toIntervalHour(6)) * 1000)
 		GROUP BY tag_key, tag_type, tag_data_type
 		HAVING string_count > %d OR number_count > %d
 		SETTINGS max_threads = 2`, databaseName, distributedTagAttributesV2, e.maxDistinctValues, e.maxDistinctValues)
-
-	e.logger.Debug("fetching should skip keys", zap.String("query", query))
-
-	keys := []shouldSkipKey{}
-
-	err := e.db.Select(context.Background(), &keys, query)
-	if err != nil {
-		e.logger.Error("error while fetching should skip keys", zap.Error(err))
-	}
+	tenantQuery := fmt.Sprintf(`
+		SELECT org_id, project_id, tag_key, tag_type, tag_data_type, uniq(string_value) as string_count, uniq(number_value) as number_count
+		FROM %s.%s
+		WHERE unix_milli >= (toUnixTimestamp(now() - toIntervalHour(6)) * 1000)
+		GROUP BY org_id, project_id, tag_key, tag_type, tag_data_type
+		HAVING string_count > %d OR number_count > %d
+		SETTINGS max_threads = 2`, databaseName, distributedTagAttributesV3, e.maxDistinctValues, e.maxDistinctValues)
 
 	shouldSkipKeys := make(map[string]shouldSkipKey)
-	for _, key := range keys {
-		mapKey := utils.MakeKeyForAttributeKeys(key.TagKey, utils.TagType(key.TagType), utils.FieldDataType(key.TagDataType))
-		e.logger.Debug("adding to should skip keys", zap.String("key", mapKey), zap.Any("string_count", key.StringCount), zap.Any("number_count", key.NumberCount))
-		shouldSkipKeys[mapKey] = key
+	for _, query := range []string{legacyQuery, tenantQuery} {
+		e.logger.Debug("fetching should skip keys", zap.String("query", query))
+		keys := []shouldSkipKey{}
+		if err := e.db.Select(context.Background(), &keys, query); err != nil {
+			e.logger.Error("error while fetching should skip keys", zap.Error(err))
+			continue
+		}
+		for _, key := range keys {
+			mapKey := utils.MakeKeyForAttributeKeys(key.TagKey, utils.TagType(key.TagType), utils.FieldDataType(key.TagDataType))
+			if key.OrgID != "" && key.ProjectID != "" {
+				mapKey = key.OrgID + "\\x1f" + key.ProjectID + "\\x1f" + mapKey
+			}
+			e.logger.Debug("adding to should skip keys", zap.String("key", mapKey), zap.Any("string_count", key.StringCount), zap.Any("number_count", key.NumberCount))
+			shouldSkipKeys[mapKey] = key
+		}
 	}
 	e.shouldSkipKeyValue.Store(shouldSkipKeys)
 }
@@ -974,6 +985,9 @@ func (e *clickhouseLogsExporter) addAttrsToTagStatement(
 		}
 
 		key := utils.MakeKeyForAttributeKeys(attrKey, tagType, utils.FieldDataTypeString)
+		if orgID != "" && projectID != "" {
+			key = orgID + "\\x1f" + projectID + "\\x1f" + key
+		}
 		if _, ok := shouldSkipKeys[key]; ok {
 			e.logger.Debug("key has been skipped", zap.String("key", key))
 			continue
@@ -998,6 +1012,9 @@ func (e *clickhouseLogsExporter) addAttrsToTagStatement(
 		}
 		e.addAttrsToAttributeKeysStatement(attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, orgID, projectID, numKey, tagType, utils.FieldDataTypeFloat64, deduper)
 		key := utils.MakeKeyForAttributeKeys(numKey, tagType, utils.FieldDataTypeFloat64)
+		if orgID != "" && projectID != "" {
+			key = orgID + "\\x1f" + projectID + "\\x1f" + key
+		}
 		if _, ok := shouldSkipKeys[key]; ok {
 			e.logger.Debug("key has been skipped", zap.String("key", key))
 			continue
@@ -1022,6 +1039,9 @@ func (e *clickhouseLogsExporter) addAttrsToTagStatement(
 		e.addAttrsToAttributeKeysStatement(attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, orgID, projectID, boolKey, tagType, utils.FieldDataTypeBool, deduper)
 
 		key := utils.MakeKeyForAttributeKeys(boolKey, tagType, utils.FieldDataTypeBool)
+		if orgID != "" && projectID != "" {
+			key = orgID + "\\x1f" + projectID + "\\x1f" + key
+		}
 		if _, ok := shouldSkipKeys[key]; ok {
 			e.logger.Debug("key has been skipped", zap.String("key", key))
 			continue
