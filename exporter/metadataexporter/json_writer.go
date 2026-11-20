@@ -238,13 +238,18 @@ func (w *jsonMetadataWriter) skipKeysTicker(ctx context.Context) {
 func (w *jsonMetadataWriter) fetchSkipKeys(ctx context.Context) {
 	query := fmt.Sprintf(`
 		SELECT tag_key, tag_type
-		FROM %s
+		FROM (
+			SELECT unix_milli, tag_key, tag_type, string_value, number_value FROM %s
+			UNION ALL
+			SELECT unix_milli, tag_key, tag_type, string_value, number_value FROM %s
+		)
 		WHERE unix_milli >= toUnixTimestamp(now() - INTERVAL 6 HOUR) * 1000
 		  AND tag_type = '%s'
 		GROUP BY tag_key, tag_type
 		HAVING uniq(string_value) > %d OR uniq(number_value) > %d
 		SETTINGS max_threads = 2`,
 		distributedTagAttrsV2Table,
+		distributedTagAttrsV3Table,
 		utils.TagTypeBodyField,
 		w.limits.MaxStringDistinctValues,
 		w.limits.MaxStringDistinctValues,
@@ -293,12 +298,6 @@ func (w *jsonMetadataWriter) Process(ctx context.Context, ld plog.Logs) error {
 	}
 	defer func() { _ = legacyStmt.Close() }()
 
-	tenantStmt, err := w.conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s (org_id, project_id, unix_milli, tag_key, tag_type, tag_data_type, string_value, number_value)", distributedTagAttrsV3Table), driver.WithReleaseConnection())
-	if err != nil {
-		return fmt.Errorf("failed to prepare tenant tag attrs batch: %w", err)
-	}
-	defer func() { _ = tenantStmt.Close() }()
-
 	newAccumulator := func(stmt driver.Batch, orgID, projectID string, tenantAware bool) *valueAccumulator {
 		return &valueAccumulator{
 			stmt: stmt, orgID: orgID, projectID: projectID, tenantAware: tenantAware,
@@ -308,7 +307,7 @@ func (w *jsonMetadataWriter) Process(ctx context.Context, ld plog.Logs) error {
 		}
 	}
 	legacyVA := newAccumulator(legacyStmt, "", "", false)
-	tenantVA := newAccumulator(tenantStmt, "", "", true)
+	var tenantVA *valueAccumulator
 
 	rls := ld.ResourceLogs()
 	for i := 0; i < rls.Len(); i++ {
@@ -319,6 +318,14 @@ func (w *jsonMetadataWriter) Process(ctx context.Context, ld plog.Logs) error {
 		if hasOrg && hasProject && orgValue.Type() == pcommon.ValueTypeStr &&
 			projectValue.Type() == pcommon.ValueTypeStr &&
 			strings.TrimSpace(orgValue.Str()) != "" && strings.TrimSpace(projectValue.Str()) != "" {
+			if tenantVA == nil {
+				tenantStmt, err := w.conn.PrepareBatch(ctx, fmt.Sprintf("INSERT INTO %s (org_id, project_id, unix_milli, tag_key, tag_type, tag_data_type, string_value, number_value)", distributedTagAttrsV3Table), driver.WithReleaseConnection())
+				if err != nil {
+					return fmt.Errorf("failed to prepare tenant tag attrs batch: %w", err)
+				}
+				defer func() { _ = tenantStmt.Close() }()
+				tenantVA = newAccumulator(tenantStmt, "", "", true)
+			}
 			tenantVA.orgID = orgValue.Str()
 			tenantVA.projectID = projectValue.Str()
 			activeVA = tenantVA
@@ -352,7 +359,9 @@ func (w *jsonMetadataWriter) Process(ctx context.Context, ld plog.Logs) error {
 	g, gCtx := errgroup.WithContext(ctx)
 	g.Go(func() error { return w.flushTypeSet(gCtx, bodyTypes) })
 	g.Go(legacyVA.flush)
-	g.Go(tenantVA.flush)
+	if tenantVA != nil {
+		g.Go(tenantVA.flush)
+	}
 	return g.Wait()
 }
 
