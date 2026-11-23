@@ -1,10 +1,12 @@
-# Standalone local multi-tenant configuration.
-# Run the collector on the host (not in a container): localhost must reach
-# the SigNoz API on :8080 and ClickHouse on :9000.
-# For non-loopback deployments, use config/multitenant-config.yaml as a
-# deployment overlay with HTTPS and allow_insecure: false.
-
+# Standalone local Community Edition multitenancy configuration.
+# Run the collector on the host where SigNoz API and ClickHouse expose their
+# local ports. For container deployments, replace localhost with service DNS
+# names and use HTTPS for the resolver (allow_insecure: false).
 receivers:
+  otlp/spanmetrics:
+    protocols:
+      grpc:
+        endpoint: "localhost:12345"
   otlp:
     protocols:
       grpc:
@@ -55,7 +57,7 @@ processors:
       - name: container.name
       - name: special.random.attribute
       - name: generated.by
-      # Span-derived metrics must retain the authenticated tenant dimensions.
+      # Span-derived metrics must retain authenticated tenant dimensions.
       - name: signoz.org.id
       - name: signoz.project.id
 
@@ -88,6 +90,8 @@ exporters:
     sending_queue:
       enabled: false
     use_new_schema: true
+  prometheus:
+    endpoint: "0.0.0.0:8889"
 
 service:
   extensions: [zpages, signozingestionkeyauth]
@@ -104,9 +108,12 @@ service:
       receivers: [otlp]
       processors: [signoztenantcontext, batch]
       exporters: [clickhouselogsexporter]
-    # Host metrics have no project ingestion credential. Keep them separate
-    # and unscoped; project queries must not treat them as project telemetry.
+    # Host metrics are intentionally separate from authenticated OTLP data.
+    # They are local infrastructure telemetry, not attributed to a project.
     metrics/host:
       receivers: [hostmetrics]
       processors: [batch]
       exporters: [signozclickhousemetrics]
+    metrics/spanmetrics:
+      receivers: [otlp/spanmetrics]
+      exporters: [prometheus]
