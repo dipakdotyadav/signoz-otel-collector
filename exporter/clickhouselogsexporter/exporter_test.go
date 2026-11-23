@@ -957,3 +957,50 @@ func TestTenantAttributeKeyMetadataIsIsolatedByOrganizationAndProject(t *testing
 	require.Equal(t, []any{orgA, project2, "http.method", utils.FieldDataTypeString}, batch.rows[1])
 	require.Equal(t, []any{orgB, project1, "http.method", utils.FieldDataTypeString}, batch.rows[2])
 }
+
+func TestTenantResourceKeyMetadataIsIsolatedByOrganizationAndProject(t *testing.T) {
+	cache := ttlcache.New(
+		ttlcache.WithTTL[string, struct{}](240*time.Minute),
+		ttlcache.WithCapacity[string, struct{}](50000),
+	)
+	defer cache.Stop()
+
+	exp := &clickhouseLogsExporter{
+		logger:    zap.NewNop(),
+		keysCache: cache,
+	}
+	batch := &tenantMetadataCaptureBatch{}
+	deduper := tagdedup.New()
+
+	const (
+		orgA     = "11111111-1111-4111-8111-111111111111"
+		orgB     = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+		project1 = "22222222-2222-4222-8222-222222222222"
+		project2 = "33333333-3333-4333-8333-333333333333"
+	)
+
+	// Resource keys must be registered independently for each organization/project.
+	for _, tenant := range [][2]string{
+		{orgA, project1},
+		{orgA, project2},
+		{orgB, project1},
+	} {
+		exp.addAttrsToAttributeKeysStatement(
+			nil, nil, nil, batch,
+			tenant[0], tenant[1],
+			"service.name", utils.TagTypeResource, utils.FieldDataTypeString, deduper,
+		)
+	}
+
+	// A repeated resource key in the same tenant must be deduplicated.
+	exp.addAttrsToAttributeKeysStatement(
+		nil, nil, nil, batch,
+		orgA, project1,
+		"service.name", utils.TagTypeResource, utils.FieldDataTypeString, deduper,
+	)
+
+	require.Len(t, batch.rows, 3)
+	require.Equal(t, []any{orgA, project1, "service.name", utils.FieldDataTypeString}, batch.rows[0])
+	require.Equal(t, []any{orgA, project2, "service.name", utils.FieldDataTypeString}, batch.rows[1])
+	require.Equal(t, []any{orgB, project1, "service.name", utils.FieldDataTypeString}, batch.rows[2])
+}
