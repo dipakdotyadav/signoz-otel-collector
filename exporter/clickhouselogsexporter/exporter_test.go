@@ -1114,3 +1114,35 @@ func TestTenantCardinalitySkipIsScopedToOrganizationAndProject(t *testing.T) {
 	require.Empty(t, legacyAttributeKeys.rows)
 	require.Empty(t, legacyResourceKeys.rows)
 }
+
+func TestTenantMetadataCacheIsIsolatedByOrganizationAndProject(t *testing.T) {
+	cache := ttlcache.New(
+		ttlcache.WithTTL[string, struct{}](240*time.Minute),
+		ttlcache.WithCapacity[string, struct{}](50000),
+	)
+	defer cache.Stop()
+
+	exp := &clickhouseLogsExporter{logger: zap.NewNop(), keysCache: cache}
+	const org = "11111111-1111-4111-8111-111111111111"
+	const projectA = "22222222-2222-4222-8222-222222222222"
+	const projectB = "33333333-3333-4333-8333-333333333333"
+
+	batchA := &tenantMetadataCaptureBatch{}
+	exp.addAttrsToAttributeKeysStatement(nil, nil, nil, batchA, org, projectA,
+		"service.name", utils.TagTypeResource, utils.FieldDataTypeString, tagdedup.New())
+	require.Len(t, batchA.rows, 1)
+
+	// A fresh batch/deduper for the same tenant must hit the shared cache.
+	repeatedBatchA := &tenantMetadataCaptureBatch{}
+	exp.addAttrsToAttributeKeysStatement(nil, nil, nil, repeatedBatchA, org, projectA,
+		"service.name", utils.TagTypeResource, utils.FieldDataTypeString, tagdedup.New())
+	require.Empty(t, repeatedBatchA.rows)
+
+	// The same key in a different project must not be suppressed by project A's cache entry.
+	batchB := &tenantMetadataCaptureBatch{}
+	exp.addAttrsToAttributeKeysStatement(nil, nil, nil, batchB, org, projectB,
+		"service.name", utils.TagTypeResource, utils.FieldDataTypeString, tagdedup.New())
+	require.Len(t, batchB.rows, 1)
+	require.Equal(t, []any{org, projectA, "service.name", utils.FieldDataTypeString}, batchA.rows[0])
+	require.Equal(t, []any{org, projectB, "service.name", utils.FieldDataTypeString}, batchB.rows[0])
+}
