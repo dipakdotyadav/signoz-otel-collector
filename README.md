@@ -134,3 +134,43 @@ Come say Hi to us on [Slack](https://signoz.io/slack) 👋 to talk observability
 ## License
 
 Licensed under the [GNU Affero General Public License v3.0](LICENSE).
+## Community Edition project-ingestion authentication (MVP)
+
+The companion SigNoz Community Edition branch can authenticate OTLP requests
+with project-scoped ingestion keys. This is an opt-in configuration: the
+default collector configuration remains unchanged.
+
+For a local host-based run, use the standalone
+[`config/multitenant-local.yaml`](config/multitenant-local.yaml). It includes
+the receivers, processors, exporters, and pipelines required by the local
+multi-tenant path; it is not an overlay that is merged automatically with
+`default-config.yaml`.
+
+```bash
+export SIGNOZ_INTERNAL_INGESTION_RESOLVER_TOKEN="$(openssl rand -hex 32)"
+make build
+make run CONFIG_FILE=./config/multitenant-local.yaml
+```
+
+Configure the SigNoz Community server with the exact same
+`SIGNOZ_INTERNAL_INGESTION_RESOLVER_TOKEN`. The local file uses HTTP only for
+the loopback resolver endpoint. Do not use this local configuration in a
+container network: replace `localhost` with the appropriate service DNS
+names and configure HTTPS with `allow_insecure: false`.
+
+The local file intentionally separates host metrics from authenticated OTLP
+pipelines. Project-scoped ingestion is only enabled for OTLP traces, metrics,
+and logs. See the companion
+[SigNoz Community MVP guide](https://github.com/dipakdotyadav/signoz/blob/feat/multi-tenancy-foundation/docs/multitenancy/community-mvp.md)
+for project bootstrap and acceptance criteria.
+
+Focused checks:
+
+```bash
+go test ./extension/signozingestionkeyauthextension ./processor/signoztenantcontextprocessor
+go build ./cmd/signozotelcollector
+```
+
+These commands validate the local collector components and build. They do not
+replace end-to-end two-project storage/query isolation tests against a running
+SigNoz and ClickHouse installation.
