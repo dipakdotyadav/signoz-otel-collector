@@ -165,4 +165,58 @@ var MetadataMigrations = []SchemaMigrationRecord{
 		},
 		DownItems: []Operation{},
 	},
+	{
+		// Tenant promotion metadata is stored separately from the legacy global
+		// evolution table. Its sorting key includes the tenant scope so merges
+		// cannot collapse identical paths belonging to different projects.
+		MigrationID: 1003,
+		UpItems: []Operation{
+			CreateTableOperation{
+				Database: "signoz_metadata",
+				Table:    "tenant_column_evolution_metadata",
+				Columns: []Column{
+					{Name: "org_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "project_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "signal", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "column_name", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "column_type", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "field_context", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "field_name", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "version", Type: ColumnTypeUInt32, Codec: "DoubleDelta, ZSTD(1)"},
+					{Name: "release_time", Type: SimpleAggregateFunction{FunctionName: "min", Arguments: []ColumnType{ColumnTypeFloat64}}, Codec: "ZSTD(1)"},
+				},
+				Engine: ReplacingMergeTree{
+					MergeTree: MergeTree{
+						OrderBy: "(org_id, project_id, signal, column_name, column_type, field_context, field_name, version)",
+						PartitionBy: "toDate(release_time / 1000000000)",
+					},
+				},
+			},
+			CreateTableOperation{
+				Database: "signoz_metadata",
+				Table:    "distributed_tenant_column_evolution_metadata",
+				Columns: []Column{
+					{Name: "org_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "project_id", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "signal", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "column_name", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "column_type", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "field_context", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "field_name", Type: ColumnTypeString, Codec: "ZSTD(1)"},
+					{Name: "version", Type: ColumnTypeUInt32, Codec: "DoubleDelta, ZSTD(1)"},
+					{Name: "release_time", Type: SimpleAggregateFunction{FunctionName: "min", Arguments: []ColumnType{ColumnTypeFloat64}}, Codec: "ZSTD(1)"},
+				},
+				Engine: Distributed{
+					Database: "signoz_metadata",
+					Table: "tenant_column_evolution_metadata",
+					ShardingKey: "cityHash64(org_id, project_id, signal, column_name)",
+				},
+			},
+		},
+		DownItems: []Operation{
+			DropTableOperation{Database: "signoz_metadata", Table: "distributed_tenant_column_evolution_metadata"},
+			DropTableOperation{Database: "signoz_metadata", Table: "tenant_column_evolution_metadata"},
+		},
+	},
+
 }
