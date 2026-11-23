@@ -900,9 +900,13 @@ func (e *clickhouseLogsExporter) processBodyForTenant(ctx context.Context, body 
 	}
 
 	var promotedSet map[string]struct{}
-	if orgID != "" && projectID != "" {
-		tenantSets := e.tenantPromotedPaths.Load().(map[string]map[string]struct{})
-		promotedSet = tenantSets[tenantPromotionCacheKey(orgID, projectID)]
+	if orgID != "" || projectID != "" {
+		// A partially populated tenant identity is malformed. Fail closed rather
+		// than accidentally applying deployment-wide legacy promotions.
+		if orgID != "" && projectID != "" {
+			tenantSets := e.tenantPromotedPaths.Load().(map[string]map[string]struct{})
+			promotedSet = tenantSets[tenantPromotionCacheKey(orgID, projectID)]
+		}
 	} else {
 		promotedSet = e.promotedPaths.Load().(map[string]struct{})
 	}
