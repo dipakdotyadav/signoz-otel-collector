@@ -1146,3 +1146,47 @@ func TestTenantMetadataCacheIsIsolatedByOrganizationAndProject(t *testing.T) {
 	require.Equal(t, []any{org, projectA, "service.name", utils.FieldDataTypeString}, batchA.rows[0])
 	require.Equal(t, []any{org, projectB, "service.name", utils.FieldDataTypeString}, batchB.rows[0])
 }
+
+
+func TestProcessBodyForTenantUsesProjectScopedPromotions(t *testing.T) {
+	const (
+		orgID = "11111111-1111-4111-8111-111111111111"
+		projectA = "22222222-2222-4222-8222-222222222222"
+		projectB = "33333333-3333-4333-8333-333333333333"
+	)
+	exporter := &clickhouseLogsExporter{cfg: &Config{BodyJSONEnabled: true}}
+	exporter.promotedPaths.Store(map[string]struct{}{"user.id": {}})
+	exporter.tenantPromotedPaths.Store(map[string]map[string]struct{}{
+		tenantPromotionCacheKey(orgID, projectA): {"user.id": {}},
+		tenantPromotionCacheKey(orgID, projectB): {},
+	})
+
+	body := pcommon.NewValueMap()
+	body.Map().PutStr("message", "hello")
+	body.Map().PutEmptyMap("user").PutStr("id", "123")
+
+	_, _, promotedA := exporter.processBodyForTenant(context.Background(), body, pcommon.NewValueEmpty(), false, orgID, projectA)
+	_, _, promotedB := exporter.processBodyForTenant(context.Background(), body, pcommon.NewValueEmpty(), false, orgID, projectB)
+	_, _, promotedLegacy := exporter.processBodyForTenant(context.Background(), body, pcommon.NewValueEmpty(), false, "", "")
+
+	require.Equal(t, `{"user.id":"123"}`, promotedA)
+	require.Equal(t, "{}", promotedB, "project B must not inherit project A or global promotions")
+	require.Equal(t, `{"user.id":"123"}`, promotedLegacy, "legacy records retain global promotion behavior")
+}
+
+func TestTenantPromotionCacheKeySeparatesOrganizationAndProject(t *testing.T) {
+	const (
+		orgA = "11111111-1111-4111-8111-111111111111"
+		orgB = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+		projectA = "22222222-2222-4222-8222-222222222222"
+		projectB = "33333333-3333-4333-8333-333333333333"
+	)
+	keys := []string{
+		tenantPromotionCacheKey(orgA, projectA),
+		tenantPromotionCacheKey(orgA, projectB),
+		tenantPromotionCacheKey(orgB, projectA),
+	}
+	require.Len(t, keys, 3)
+	require.NotEqual(t, keys[0], keys[1])
+	require.NotEqual(t, keys[0], keys[2])
+}
