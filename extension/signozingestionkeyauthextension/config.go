@@ -2,6 +2,7 @@ package signozingestionkeyauthextension
 
 import (
 	"errors"
+	"net"
 	"net/url"
 	"strings"
 
@@ -25,8 +26,18 @@ func (cfg *Config) Validate() error {
 	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
 		return errors.New("resolver_endpoint must be an absolute http(s) URL")
 	}
-	if u.Scheme != "https" && !cfg.AllowInsecure {
-		return errors.New("resolver_endpoint must use https unless allow_insecure is explicitly enabled")
+	if u.User != nil || u.Fragment != "" {
+		return errors.New("resolver_endpoint must not contain user information or a fragment")
+	}
+	if u.Scheme == "http" {
+		if !cfg.AllowInsecure {
+			return errors.New("resolver_endpoint must use https unless allow_insecure is explicitly enabled")
+		}
+		host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+		ip := net.ParseIP(host)
+		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+			return errors.New("plain HTTP resolver endpoints are permitted only on loopback")
+		}
 	}
 	return nil
 }
