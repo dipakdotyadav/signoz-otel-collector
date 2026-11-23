@@ -1004,3 +1004,53 @@ func TestTenantResourceKeyMetadataIsIsolatedByOrganizationAndProject(t *testing.
 	require.Equal(t, []any{orgA, project2, "service.name", utils.FieldDataTypeString}, batch.rows[1])
 	require.Equal(t, []any{orgB, project1, "service.name", utils.FieldDataTypeString}, batch.rows[2])
 }
+
+func TestMixedTenantAttributeAndResourceMetadataStayProjectScoped(t *testing.T) {
+	cache := ttlcache.New(
+		ttlcache.WithTTL[string, struct{}](240*time.Minute),
+		ttlcache.WithCapacity[string, struct{}](50000),
+	)
+	defer cache.Stop()
+
+	exp := &clickhouseLogsExporter{logger: zap.NewNop(), keysCache: cache}
+	legacyTags := &tenantMetadataCaptureBatch{}
+	tenantTags := &tenantMetadataCaptureBatch{}
+	legacyAttributeKeys := &tenantMetadataCaptureBatch{}
+	legacyResourceKeys := &tenantMetadataCaptureBatch{}
+	tenantAttributeKeys := &tenantMetadataCaptureBatch{}
+	tenantResourceKeys := &tenantMetadataCaptureBatch{}
+	deduper := tagdedup.New()
+
+	const org = "11111111-1111-4111-8111-111111111111"
+	const projectA = "22222222-2222-4222-8222-222222222222"
+	const projectB = "33333333-3333-4333-8333-333333333333"
+
+	for _, project := range []string{projectA, projectB} {
+		attrs := attributeMap{
+			StringData: map[string]string{"deployment.environment": "production"},
+			NumberData: map[string]float64{},
+			BoolData:   map[string]bool{},
+		}
+		for _, tagType := range []utils.TagType{utils.TagTypeAttribute, utils.TagTypeResource} {
+			require.NoError(t, exp.addAttrsToTagStatement(
+				legacyTags, tenantTags,
+				legacyAttributeKeys, legacyResourceKeys,
+				tenantAttributeKeys, tenantResourceKeys,
+				org, project, tagType, attrs, map[string]shouldSkipKey{}, deduper,
+			))
+		}
+	}
+
+	// The same key/value pair is independently emitted for each project and tag type.
+	require.Len(t, tenantTags.rows, 4)
+	require.Len(t, tenantAttributeKeys.rows, 2)
+	require.Len(t, tenantResourceKeys.rows, 2)
+	require.Empty(t, legacyTags.rows)
+	require.Empty(t, legacyAttributeKeys.rows)
+	require.Empty(t, legacyResourceKeys.rows)
+
+	require.Equal(t, []any{org, projectA, "deployment.environment", utils.FieldDataTypeString}, tenantAttributeKeys.rows[0])
+	require.Equal(t, []any{org, projectB, "deployment.environment", utils.FieldDataTypeString}, tenantAttributeKeys.rows[1])
+	require.Equal(t, []any{org, projectA, "deployment.environment", utils.FieldDataTypeString}, tenantResourceKeys.rows[0])
+	require.Equal(t, []any{org, projectB, "deployment.environment", utils.FieldDataTypeString}, tenantResourceKeys.rows[1])
+}
