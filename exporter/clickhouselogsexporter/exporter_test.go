@@ -1107,7 +1107,8 @@ func TestTenantCardinalitySkipIsScopedToOrganizationAndProject(t *testing.T) {
 
 	// Project A is skipped, while the same key/value is ingested for project B.
 	require.Len(t, tenantTags.rows, 1)
-	require.Equal(t, []any{org, projectB, int64(0), attrKey, utils.TagTypeAttribute, utils.FieldDataTypeString, "/checkout", nil}, tenantTags.rows[0])
+	unixMilli := (time.Now().UnixMilli() / 3600000) * 3600000
+	require.Equal(t, []any{org, projectB, unixMilli, attrKey, utils.TagTypeAttribute, utils.FieldDataTypeString, "/checkout", nil}, tenantTags.rows[0])
 	require.Len(t, tenantAttributeKeys.rows, 2)
 	require.Empty(t, legacyTags.rows)
 	require.Empty(t, legacyAttributeKeys.rows)
