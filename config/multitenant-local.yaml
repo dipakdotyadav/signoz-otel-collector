@@ -1,0 +1,112 @@
+# Standalone local multi-tenant configuration.
+# Run the collector on the host (not in a container): localhost must reach
+# the SigNoz API on :8080 and ClickHouse on :9000.
+# For non-loopback deployments, use config/multitenant-config.yaml as a
+# deployment overlay with HTTPS and allow_insecure: false.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: "0.0.0.0:4317"
+        auth:
+          authenticator: signozingestionkeyauth
+      http:
+        endpoint: "0.0.0.0:4318"
+        auth:
+          authenticator: signozingestionkeyauth
+  hostmetrics:
+    collection_interval: 30s
+    scrapers:
+      cpu:
+      load:
+      memory:
+      disk:
+      filesystem:
+      network:
+
+processors:
+  batch:
+    send_batch_size: 1000
+    timeout: 10s
+  signoztenantcontext: {}
+  signozspanmetrics/delta:
+    metrics_exporter: signozclickhousemetrics
+    metrics_flush_interval: 60s
+    latency_histogram_buckets: [100us, 1ms, 2ms, 6ms, 10ms, 50ms, 100ms, 250ms, 500ms, 1000ms, 1400ms, 2000ms, 5s, 10s, 20s, 40s, 60s]
+    dimensions_cache_size: 100000
+    aggregation_temporality: AGGREGATION_TEMPORALITY_DELTA
+    enable_exp_histogram: true
+    skip_spans_older_than: 24h
+    dimensions:
+      - name: service.namespace
+        default: default
+      - name: deployment.environment
+        default: default
+      - name: signoz.collector.id
+      - name: service.version
+      - name: browser.platform
+      - name: browser.mobile
+      - name: k8s.cluster.name
+      - name: k8s.node.name
+      - name: k8s.namespace.name
+      - name: host.name
+      - name: host.type
+      - name: container.name
+      - name: special.random.attribute
+      - name: generated.by
+      # Span-derived metrics must retain the authenticated tenant dimensions.
+      - name: signoz.org.id
+      - name: signoz.project.id
+
+extensions:
+  zpages: {}
+  signozingestionkeyauth:
+    resolver_endpoint: http://localhost:8080/api/v2/internal/ingestion-keys/resolve
+    internal_token: ${env:SIGNOZ_INTERNAL_INGESTION_RESOLVER_TOKEN}
+    allow_insecure: true
+
+exporters:
+  clickhousetraces:
+    datasource: tcp://localhost:9000/signoz_traces
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+    sending_queue:
+      enabled: true
+      queue_size: 100
+      num_consumers: 5
+  signozclickhousemetrics:
+    sending_queue:
+      enabled: false
+    dsn: tcp://localhost:9000/signoz_metrics
+  clickhouselogsexporter:
+    dsn: tcp://localhost:9000/signoz_logs
+    timeout: 10s
+    sending_queue:
+      enabled: false
+    use_new_schema: true
+
+service:
+  extensions: [zpages, signozingestionkeyauth]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [signoztenantcontext, signozspanmetrics/delta, batch]
+      exporters: [clickhousetraces]
+    metrics:
+      receivers: [otlp]
+      processors: [signoztenantcontext, batch]
+      exporters: [signozclickhousemetrics]
+    logs:
+      receivers: [otlp]
+      processors: [signoztenantcontext, batch]
+      exporters: [clickhouselogsexporter]
+    # Host metrics have no project ingestion credential. Keep them separate
+    # and unscoped; project queries must not treat them as project telemetry.
+    metrics/host:
+      receivers: [hostmetrics]
+      processors: [batch]
+      exporters: [signozclickhousemetrics]
