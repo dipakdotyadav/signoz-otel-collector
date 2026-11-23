@@ -1167,10 +1167,12 @@ func TestProcessBodyForTenantUsesProjectScopedPromotions(t *testing.T) {
 
 	_, _, promotedA := exporter.processBodyForTenant(context.Background(), body, pcommon.NewValueEmpty(), false, orgID, projectA)
 	_, _, promotedB := exporter.processBodyForTenant(context.Background(), body, pcommon.NewValueEmpty(), false, orgID, projectB)
+	_, _, promotedPartial := exporter.processBodyForTenant(context.Background(), body, pcommon.NewValueEmpty(), false, orgID, "")
 	_, _, promotedLegacy := exporter.processBodyForTenant(context.Background(), body, pcommon.NewValueEmpty(), false, "", "")
 
 	require.Equal(t, `{"user.id":"123"}`, promotedA)
 	require.Equal(t, "{}", promotedB, "project B must not inherit project A or global promotions")
+	require.Equal(t, "{}", promotedPartial, "incomplete tenant identity must not fall back to global promotions")
 	require.Equal(t, `{"user.id":"123"}`, promotedLegacy, "legacy records retain global promotion behavior")
 }
 
