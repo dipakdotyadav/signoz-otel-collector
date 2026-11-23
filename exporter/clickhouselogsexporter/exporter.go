@@ -336,8 +336,11 @@ func (e *clickhouseLogsExporter) doFetchShouldSkipKeys() {
 		e.logger.Debug("fetching should skip keys", zap.String("query", query))
 		keys := []shouldSkipKey{}
 		if err := e.db.Select(context.Background(), &keys, query); err != nil {
-			e.logger.Error("error while fetching should skip keys", zap.Error(err))
-			continue
+			// Keep the last known-good snapshot. Publishing a partial result after
+			// either legacy or tenant query fails can silently disable cardinality
+			// protection for the affected scope.
+			e.logger.Error("error while fetching should skip keys; retaining previous snapshot", zap.Error(err))
+			return
 		}
 		for _, key := range keys {
 			mapKey := utils.MakeKeyForAttributeKeys(key.TagKey, utils.TagType(key.TagType), utils.FieldDataType(key.TagDataType))
