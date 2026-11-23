@@ -134,6 +134,7 @@ Come say Hi to us on [Slack](https://signoz.io/slack) 👋 to talk observability
 ## License
 
 Licensed under the [GNU Affero General Public License v3.0](LICENSE).
+
 ## Community Edition project-ingestion authentication (MVP)
 
 The companion SigNoz Community Edition branch can authenticate OTLP requests
