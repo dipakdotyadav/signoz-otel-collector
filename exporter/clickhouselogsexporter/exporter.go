@@ -276,9 +276,11 @@ type clickhouseLogsExporter struct {
 	fetchKeysInterval  time.Duration
 	shutdownFuncs      []func() error
 
-	// promotedPaths holds a set of JSON paths that should be promoted.
-	// Accessed via atomic.Value to allow lock-free reads on hot path.
-	promotedPaths             atomic.Value // stores map[string]struct{}
+	// promotedPaths is the legacy/global promotion set for records without tenant identity.
+	promotedPaths atomic.Value // stores map[string]struct{}
+	// Tenant promotion cache is keyed by organization and project. Tenant-scoped
+	// records never inherit global promotions.
+	tenantPromotedPaths atomic.Value // stores map[string]map[string]struct{}
 	promotedPathsSyncInterval time.Duration
 }
 
@@ -305,6 +307,7 @@ func newExporter(_ exporter.Settings, cfg *Config, opts ...LogExporterOption) (*
 
 	// Ensure promotedPaths is always initialized so reads and type assertions are safe
 	e.promotedPaths.Store(map[string]struct{}{})
+	e.tenantPromotedPaths.Store(map[string]map[string]struct{}{})
 
 	return e, nil
 }
@@ -401,29 +404,51 @@ func (e *clickhouseLogsExporter) fetchPromotedPaths() {
 }
 
 func (e *clickhouseLogsExporter) doFetchPromotedPaths() {
-	// Query Evolution Table for promoted paths
-	// Format: signal, col_name, col_type, field_context, field_name, release_time
-	// Example: logs, body_promoted, JSON, body, user.name, Jan 10
-	query := fmt.Sprintf(
+	// Legacy promotions are retained only for records without tenant identity.
+	legacyQuery := fmt.Sprintf(
 		`SELECT field_name FROM %s WHERE signal = 'logs' AND column_name = '%s' AND field_context = 'body' AND field_name != '__all__' SETTINGS max_threads = 1`,
-		distributedColumnEvolutionTable,
-		constants.BodyPromotedColumn,
+		distributedColumnEvolutionTable, constants.BodyPromotedColumn,
 	)
-	e.logger.Debug("fetching promoted paths from evolution table", zap.String("query", query))
-
-	rows := []struct {
+	legacyRows := []struct {
 		FieldName string `ch:"field_name"`
 	}{}
-	if err := e.db.Select(context.Background(), &rows, query); err != nil {
-		e.logger.Error("error while fetching promoted paths from evolution table", zap.Error(err))
+	if err := e.db.Select(context.Background(), &legacyRows, legacyQuery); err != nil {
+		e.logger.Error("error while fetching legacy promoted paths; retaining previous snapshot", zap.Error(err))
 		return
 	}
-	updated := make(map[string]struct{}, len(rows))
-	for _, r := range rows {
-		updated[r.FieldName] = struct{}{}
+	legacyUpdated := make(map[string]struct{}, len(legacyRows))
+	for _, row := range legacyRows {
+		legacyUpdated[row.FieldName] = struct{}{}
 	}
 
-	e.promotedPaths.Store(updated)
+	tenantQuery := fmt.Sprintf(
+		`SELECT org_id, project_id, field_name FROM %s.distributed_tenant_column_evolution_metadata WHERE signal = 'logs' AND column_name = '%s' AND field_context = 'body' AND field_name != '__all__' AND org_id != '' AND project_id != '' SETTINGS max_threads = 1`,
+		constants.SignozMetadataDB, constants.BodyPromotedColumn,
+	)
+	tenantRows := []struct {
+		OrgID string `ch:"org_id"`
+		ProjectID string `ch:"project_id"`
+		FieldName string `ch:"field_name"`
+	}{}
+	if err := e.db.Select(context.Background(), &tenantRows, tenantQuery); err != nil {
+		e.logger.Error("error while fetching tenant promoted paths; retaining previous snapshot", zap.Error(err))
+		return
+	}
+	tenantUpdated := make(map[string]map[string]struct{})
+	for _, row := range tenantRows {
+		key := tenantPromotionCacheKey(row.OrgID, row.ProjectID)
+		if tenantUpdated[key] == nil {
+			tenantUpdated[key] = make(map[string]struct{})
+		}
+		tenantUpdated[key][row.FieldName] = struct{}{}
+	}
+
+	e.promotedPaths.Store(legacyUpdated)
+	e.tenantPromotedPaths.Store(tenantUpdated)
+}
+
+func tenantPromotionCacheKey(orgID, projectID string) string {
+	return orgID + "\x1f" + projectID
 }
 
 // Shutdown will shutdown the exporter.
@@ -720,9 +745,9 @@ producerIteration:
 					}
 
 					originalBody, hasOriginalBody := record.Attributes().Get(constants.OriginalBodyAttributeKey)
-					body, bodyJSON, promoted := e.processBody(groupCtx, record.Body(), originalBody, hasOriginalBody)
 					orgID, _ := res.Attributes().Get("signoz.org.id")
 					projectID, _ := res.Attributes().Get("signoz.project.id")
+					body, bodyJSON, promoted := e.processBodyForTenant(groupCtx, record.Body(), originalBody, hasOriginalBody, orgID.Str(), projectID.Str())
 					recordStream <- &Record{
 						orgID:            orgID.Str(),
 						projectID:        projectID.Str(),
@@ -857,11 +882,16 @@ producerIteration:
 }
 
 func (e *clickhouseLogsExporter) processBody(ctx context.Context, body pcommon.Value, originalBody pcommon.Value, hasOriginalBody bool) (string, string, string) {
+	return e.processBodyForTenant(ctx, body, originalBody, hasOriginalBody, "", "")
+}
+
+// processBodyForTenant uses the authenticated ingestion tenant's promotion set.
+// Tenant-scoped records never fall back to the legacy global promotion set.
+func (e *clickhouseLogsExporter) processBodyForTenant(ctx context.Context, body pcommon.Value, originalBody pcommon.Value, hasOriginalBody bool, orgID, projectID string) (string, string, string) {
 	if !e.cfg.BodyJSONEnabled && !hasOriginalBody {
 		return getStringifiedBody(body), "{}", "{}"
 	}
 
-	// switch the reference to bodyJSON
 	bodyJSON := body
 	if body.Type() != pcommon.ValueTypeMap {
 		bodyJSON = pcommon.NewValueMap()
@@ -869,17 +899,20 @@ func (e *clickhouseLogsExporter) processBody(ctx context.Context, body pcommon.V
 		e.nonMapBodyCounter.Add(ctx, 1)
 	}
 
-	// promoted paths extraction using cached set
-	promotedSet := e.promotedPaths.Load().(map[string]struct{})
+	var promotedSet map[string]struct{}
+	if orgID != "" && projectID != "" {
+		tenantSets := e.tenantPromotedPaths.Load().(map[string]map[string]struct{})
+		promotedSet = tenantSets[tenantPromotionCacheKey(orgID, projectID)]
+	} else {
+		promotedSet = e.promotedPaths.Load().(map[string]struct{})
+	}
 	promoted := utils.BuildPromotedPaths(bodyJSON.Map(), promotedSet)
 
 	if e.cfg.BodyJSONEnabled {
-		// set body to empty string
 		body = pcommon.NewValueEmpty()
 	} else {
 		body = originalBody
 	}
-
 	return getStringifiedBody(body), getJSONColumnBody(bodyJSON), getJSONColumnBody(promoted)
 }
 
