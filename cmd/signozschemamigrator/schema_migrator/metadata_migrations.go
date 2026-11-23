@@ -185,7 +185,7 @@ var MetadataMigrations = []SchemaMigrationRecord{
 					{Name: "version", Type: ColumnTypeUInt32, Codec: "DoubleDelta, ZSTD(1)"},
 					{Name: "release_time", Type: SimpleAggregateFunction{FunctionName: "min", Arguments: []ColumnType{ColumnTypeFloat64}}, Codec: "ZSTD(1)"},
 				},
-				Engine: ReplacingMergeTree{
+				Engine: AggregatingMergeTree{
 					MergeTree: MergeTree{
 						OrderBy: "(org_id, project_id, signal, column_name, column_type, field_context, field_name, version)",
 						PartitionBy: "toDate(release_time / 1000000000)",
