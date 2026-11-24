@@ -624,14 +624,14 @@ func (e *clickhouseLogsExporter) pushToClickhouse(ctx context.Context, ld plog.L
 				if err := e.addAttrsToTagStatement(tagStatementV2, tenantTagStatementV3, attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, rec.orgID, rec.projectID, utils.TagTypeResource, rec.resourceMap, shouldSkipKeys, deduper); err != nil {
 					return err
 				}
-				if err := e.addAttrsToTagStatement(tagStatementV2, attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, rec.orgID, rec.projectID, utils.TagTypeScope, rec.scopeMap, shouldSkipKeys, deduper); err != nil {
+				if err := e.addAttrsToTagStatement(tagStatementV2, tenantTagStatementV3, attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, rec.orgID, rec.projectID, utils.TagTypeScope, rec.scopeMap, shouldSkipKeys, deduper); err != nil {
 					return err
 				}
-				if err := e.addAttrsToTagStatement(tagStatementV2, attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, rec.orgID, rec.projectID, utils.TagTypeAttribute, rec.attrsMap, shouldSkipKeys, deduper); err != nil {
+				if err := e.addAttrsToTagStatement(tagStatementV2, tenantTagStatementV3, attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, rec.orgID, rec.projectID, utils.TagTypeAttribute, rec.attrsMap, shouldSkipKeys, deduper); err != nil {
 					return err
 				}
 				// log fields
-				_ = e.addAttrsToTagStatement(tagStatementV2, attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, rec.orgID, rec.projectID, utils.TagTypeLogField, rec.logFields, shouldSkipKeys, deduper)
+				_ = e.addAttrsToTagStatement(tagStatementV2, tenantTagStatementV3, attributeKeysStmt, resourceKeysStmt, tenantAttributeKeysStmt, tenantResourceKeysStmt, rec.orgID, rec.projectID, utils.TagTypeLogField, rec.logFields, shouldSkipKeys, deduper)
 
 				// append main log row
 				args := []any{
